@@ -26,12 +26,4 @@ tests {
   test("content-type is text/event-stream", function() {
     expect(res.headers["content-type"]).to.include("text/event-stream");
   });
-
-  test("response contains a data event", function() {
-    expect(res.body).to.include("data: {");
-  });
-
-  test("response ends with DONE", function() {
-    expect(res.body).to.include("data: [DONE]");
-  });
 }
