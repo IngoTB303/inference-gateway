@@ -1,0 +1,36 @@
+meta {
+  name: Echo Correct Shape
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "model": "test",
+    "messages": [{"role": "user", "content": "hello"}]
+  }
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("id field is present", function() {
+    expect(res.body).to.have.property("id");
+  });
+  
+  test("choices field is present", function() {
+    expect(res.body).to.have.property("choices");
+  });
+  
+  test("usage field is present", function() {
+    expect(res.body).to.have.property("usage");
+  });
+}

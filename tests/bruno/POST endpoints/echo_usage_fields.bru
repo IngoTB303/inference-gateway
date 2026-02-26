@@ -1,0 +1,32 @@
+meta {
+  name: Echo Usage Fields
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "model": "test",
+    "messages": [{"role": "user", "content": "hello"}]
+  }
+}
+
+tests {
+  test("usage has prompt_tokens", function() {
+    expect(res.body.usage).to.have.property("prompt_tokens");
+  });
+  
+  test("usage has completion_tokens", function() {
+    expect(res.body.usage).to.have.property("completion_tokens");
+  });
+  
+  test("usage has total_tokens", function() {
+    expect(res.body.usage).to.have.property("total_tokens");
+  });
+}

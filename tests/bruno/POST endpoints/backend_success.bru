@@ -1,0 +1,36 @@
+meta {
+  name: Backend Success
+  type: http
+  seq: 1
+}
+
+docs {
+  Requires the gateway to be running with BACKEND_URL set to a live backend (e.g. llama.cpp).
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "model": "test",
+    "messages": [{"role": "user", "content": "hello"}]
+  }
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("id field is present", function() {
+    expect(res.body).to.have.property("id");
+  });
+
+  test("X-Request-ID response header is present", function() {
+    expect(res.headers).to.have.property("x-request-id");
+  });
+}

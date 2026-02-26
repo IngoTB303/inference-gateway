@@ -1,0 +1,28 @@
+meta {
+  name: Empty Messages List
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "model": "test",
+    "messages": []
+  }
+}
+
+tests {
+  test("status is 400", function() {
+    expect(res.status).to.equal(400);
+  });
+
+  test("error is invalid_messages", function() {
+    expect(res.body.error).to.equal("invalid_messages");
+  });
+}

@@ -1,0 +1,29 @@
+meta {
+  name: Request ID Generated
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "model": "test",
+    "messages": [{"role": "user", "content": "hello"}]
+  }
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("id is a valid UUID4", function() {
+    const uuid4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    expect(res.body.id).to.match(uuid4Pattern);
+  });
+}

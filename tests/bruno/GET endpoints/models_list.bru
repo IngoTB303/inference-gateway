@@ -1,0 +1,21 @@
+meta {
+  name: Models List
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/v1/models
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("data is a non-empty list", function() {
+    expect(res.body.data).to.be.an("array").with.length.greaterThan(0);
+  });
+}

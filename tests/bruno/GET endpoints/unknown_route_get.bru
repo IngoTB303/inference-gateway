@@ -1,0 +1,17 @@
+meta {
+  name: Unknown Route GET
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/unknown
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 404", function() {
+    expect(res.status).to.equal(404);
+  });
+}

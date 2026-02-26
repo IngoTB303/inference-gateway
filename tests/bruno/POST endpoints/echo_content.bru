@@ -1,0 +1,25 @@
+meta {
+  name: Echo Content
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "model": "test",
+    "messages": [{"role": "user", "content": "hello"}]
+  }
+}
+
+tests {
+  test("content starts with Echo: hello", function() {
+    const content = res.body.choices[0].message.content;
+    expect(content).to.match(/^Echo: hello/);
+  });
+}

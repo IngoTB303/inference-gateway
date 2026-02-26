@@ -1,0 +1,23 @@
+[project]
+name = "inference-gateway"
+version = "0.1.0"
+description = "OpenAI-compatible HTTP inference gateway with echo mode and backend proxy support"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+inference-gateway = "main:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "respx>=0.21",
+    "ruff>=0.15.3",
+]

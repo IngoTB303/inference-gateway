@@ -1,0 +1,32 @@
+meta {
+  name: Request ID Alt Header
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: none
+}
+
+headers {
+  Request-Id: alt-request-456
+}
+
+body:json {
+  {
+    "model": "test",
+    "messages": [{"role": "user", "content": "hello"}]
+  }
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("id in body matches sent Request-Id", function() {
+    expect(res.body.id).to.equal("alt-request-456");
+  });
+}
