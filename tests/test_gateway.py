@@ -114,7 +114,6 @@ def test_healthz(gateway):
     assert body == {"status": "ok"}
 
 
-
 def test_unknown_route_get(gateway):
     status, _ = _get(f"{gateway}/unknown")
     assert status == 404
@@ -332,7 +331,10 @@ def test_metrics_error_count(gateway):
 
 
 def test_metrics_prompt_tokens_echo(gateway):
-    payload = {"model": "test", "messages": [{"role": "user", "content": "hello world"}]}
+    payload = {
+        "model": "test",
+        "messages": [{"role": "user", "content": "hello world"}],
+    }
     _post(f"{gateway}/v1/chat/completions", payload)
 
     _, metrics_body = _get(f"{gateway}/metrics")
@@ -580,7 +582,12 @@ def test_routing_by_model_vllm(monkeypatch):
     monkeypatch.setattr(main, "gateway_config", config)
     monkeypatch.setattr(main.settings, "backend_url", None)
     monkeypatch.setattr(main.settings, "api_key", None)
-    for f in ("request_count", "error_count", "prompt_tokens_total", "completion_tokens_total"):
+    for f in (
+        "request_count",
+        "error_count",
+        "prompt_tokens_total",
+        "completion_tokens_total",
+    ):
         monkeypatch.setattr(main.metrics, f, 0)
     monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
 
@@ -588,8 +595,17 @@ def test_routing_by_model_vllm(monkeypatch):
         return_value=httpx.Response(
             200,
             json={
-                "choices": [{"message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "hi"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 2,
+                    "completion_tokens": 1,
+                    "total_tokens": 3,
+                },
             },
         )
     )
@@ -601,7 +617,10 @@ def test_routing_by_model_vllm(monkeypatch):
     try:
         status, body, _ = _post(
             f"http://127.0.0.1:{port}/v1/chat/completions",
-            {"model": "remote-modal-vllm", "messages": [{"role": "user", "content": "hello"}]},
+            {
+                "model": "remote-modal-vllm",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
         )
         assert status == 200
         assert body["backend"] == "remote-modal-vllm"
@@ -843,3 +862,236 @@ def test_streaming_logs_usage(backend_gateway):
     _, metrics_body = _get(f"{backend_gateway}/metrics")
     assert metrics_body["prompt_tokens_total"] == 7
     assert metrics_body["completion_tokens_total"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Latency in usage (#10)
+# ---------------------------------------------------------------------------
+
+
+def test_echo_latency_in_usage(gateway):
+    """Echo response includes latency_ms in usage."""
+    _, body, _ = _post(f"{gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    assert "latency_ms" in body["usage"]
+    assert body["usage"]["latency_ms"] >= 0
+
+
+@respx.mock
+def test_backend_latency_in_usage(backend_gateway):
+    """Backend response includes latency_ms in usage, set by the gateway."""
+    respx.post("http://test-backend/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "hi"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 2,
+                    "total_tokens": 5,
+                },
+            },
+        )
+    )
+    _, body, _ = _post(f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    assert "latency_ms" in body["usage"]
+    assert body["usage"]["latency_ms"] >= 0
+
+
+@respx.mock
+def test_config_backend_latency_in_usage(multi_backend_gateway):
+    """Config-routed backend response includes latency_ms in usage."""
+    respx.post("http://test-backend/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "hi"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 2,
+                    "total_tokens": 5,
+                },
+            },
+        )
+    )
+    _, body, _ = _post(
+        f"{multi_backend_gateway}/v1/chat/completions",
+        {
+            "model": "remote-modal-llama",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+    assert "latency_ms" in body["usage"]
+    assert body["usage"]["latency_ms"] >= 0
+
+
+# ---------------------------------------------------------------------------
+# Live backend tests (#9) — skipped by default; run with: uv run pytest -m live
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def live_gateway(monkeypatch):
+    """Gateway backed by real config.yaml on a free port."""
+    from gateway.config import load_config
+
+    cfg = load_config("config.yaml")
+    monkeypatch.setattr(main, "gateway_config", cfg)
+    monkeypatch.setattr(main.settings, "backend_url", None)
+    monkeypatch.setattr(main.settings, "api_key", None)
+    for f in (
+        "request_count",
+        "error_count",
+        "prompt_tokens_total",
+        "completion_tokens_total",
+    ):
+        monkeypatch.setattr(main.metrics, f, 0)
+    monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
+
+    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{port}"
+    server.shutdown()
+
+
+@pytest.mark.live
+def test_live_backends_endpoint(live_gateway):
+    """GET /v1/backends lists all backends from config.yaml."""
+    status, body = _get(f"{live_gateway}/v1/backends")
+    assert status == 200
+    names = [b["name"] for b in body["backends"]]
+    assert "local" in names
+    assert "local-llama" in names
+    assert "remote-modal-llama" in names
+    assert "remote-modal-vllm" in names
+    assert body["default"] == "local"
+
+
+def _assert_valid_completion(body: dict, backend_name: str) -> None:
+    """Shared assertions for a successful completion response."""
+    assert "id" in body
+    assert body.get("backend") == backend_name
+    assert len(body.get("choices", [])) > 0
+    assert body["choices"][0]["message"]["role"] == "assistant"
+    assert isinstance(body["choices"][0]["message"]["content"], str)
+    usage = body.get("usage", {})
+    assert "latency_ms" in usage
+    assert usage["latency_ms"] >= 0
+
+
+@pytest.mark.live
+def test_live_local_llama(live_gateway):
+    """Live inference against local-llama backend."""
+    try:
+        status, body, _ = _post(
+            f"{live_gateway}/v1/chat/completions",
+            {
+                "model": "local-llama",
+                "messages": [{"role": "user", "content": "Say hi"}],
+                "max_tokens": 10,
+            },
+        )
+    except urllib.error.HTTPError as e:
+        status = e.code
+        body = json.loads(e.read())
+
+    if status in (502, 504):
+        pytest.skip(f"local-llama backend not reachable (status {status})")
+
+    assert status == 200
+    _assert_valid_completion(body, "local-llama")
+
+
+@pytest.mark.live
+def test_live_remote_modal_llama(live_gateway):
+    """Live inference against remote-modal-llama backend."""
+    try:
+        status, body, _ = _post(
+            f"{live_gateway}/v1/chat/completions",
+            {
+                "model": "remote-modal-llama",
+                "messages": [{"role": "user", "content": "Say hi"}],
+                "max_tokens": 10,
+            },
+        )
+    except urllib.error.HTTPError as e:
+        status = e.code
+        body = json.loads(e.read())
+
+    if status in (502, 504):
+        pytest.skip(f"remote-modal-llama backend not reachable (status {status})")
+
+    assert status == 200
+    _assert_valid_completion(body, "remote-modal-llama")
+
+
+@pytest.mark.live
+def test_live_remote_modal_vllm(live_gateway):
+    """Live inference against remote-modal-vllm backend."""
+    try:
+        status, body, _ = _post(
+            f"{live_gateway}/v1/chat/completions",
+            {
+                "model": "remote-modal-vllm",
+                "messages": [{"role": "user", "content": "Say hi"}],
+                "max_tokens": 10,
+            },
+        )
+    except urllib.error.HTTPError as e:
+        status = e.code
+        body = json.loads(e.read())
+
+    if status in (502, 504):
+        pytest.skip(f"remote-modal-vllm backend not reachable (status {status})")
+
+    assert status == 200
+    _assert_valid_completion(body, "remote-modal-vllm")
+
+
+@pytest.mark.live
+def test_live_backend_timeout(monkeypatch):
+    """Backend that does not respond within timeout triggers a 504."""
+    from gateway.backends.echo import EchoBackend as _EchoBackend
+
+    echo = _EchoBackend(name="local")
+    unreachable = HttpBackend(
+        name="unreachable", url="http://127.0.0.1:19999", timeout=0.1
+    )
+    config = GatewayConfig(backends=[echo, unreachable], default_backend=echo)
+
+    monkeypatch.setattr(main, "gateway_config", config)
+    monkeypatch.setattr(main.settings, "backend_url", None)
+    monkeypatch.setattr(main.settings, "api_key", None)
+    for f in (
+        "request_count",
+        "error_count",
+        "prompt_tokens_total",
+        "completion_tokens_total",
+    ):
+        monkeypatch.setattr(main.metrics, f, 0)
+    monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
+
+    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, body, _ = _post(
+            f"http://127.0.0.1:{port}/v1/chat/completions",
+            {"model": "unreachable", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert status == 504
+        assert body["error"] == "gateway_timeout"
+    finally:
+        server.shutdown()

@@ -79,7 +79,9 @@ metrics = Metrics()
 # ---------------------------------------------------------------------------
 
 
-def _normalize_response(data: dict[str, Any], request_id: str) -> dict[str, Any]:
+def _normalize_response(
+    data: dict[str, Any], request_id: str, latency_ms: float = 0.0
+) -> dict[str, Any]:
     """Ensure response has all expected fields regardless of backend."""
     data["id"] = request_id
     data.setdefault("object", "chat.completion")
@@ -100,6 +102,7 @@ def _normalize_response(data: dict[str, Any], request_id: str) -> dict[str, Any]
         "total_tokens",
         usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
     )
+    usage["latency_ms"] = round(latency_ms, 2)
     data["usage"] = usage
 
     return data
@@ -173,6 +176,7 @@ def build_response(
     model: str = "echo",
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
+    latency_ms: float = 0.0,
 ) -> dict[str, Any]:
     return {
         "id": request_id,
@@ -189,6 +193,7 @@ def build_response(
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
+            "latency_ms": round(latency_ms, 2),
         },
     }
 
@@ -327,6 +332,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
         prompt_tokens = len(prompt.split())
         completion_tokens = len(content.split())
 
+        latency_ms = (time.monotonic() - start) * 1000
+
         if stream:
             self._send_sse_echo(request_id, content)
         else:
@@ -335,10 +342,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 content,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                latency_ms=latency_ms,
             )
             self._send_json(200, resp, request_id=request_id)
 
-        latency_ms = (time.monotonic() - start) * 1000
         self._record_metrics(200, latency_ms, prompt_tokens, completion_tokens)
         log.info(
             "POST /v1/chat/completions status=200 latency_ms=%.1f mode=echo", latency_ms
@@ -407,14 +414,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(502, {"error": "backend_error"}, request_id=request_id)
             return
 
-        data = _normalize_response(data, request_id)
+        latency_ms = (time.monotonic() - start) * 1000
+        data = _normalize_response(data, request_id, latency_ms=latency_ms)
         data["backend"] = backend.name
 
         usage = data["usage"]
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
 
-        latency_ms = (time.monotonic() - start) * 1000
         self._record_metrics(200, latency_ms, prompt_tokens, completion_tokens)
         log.info(
             "POST /v1/chat/completions status=200 latency_ms=%.1f mode=config backend=%s",
@@ -481,12 +488,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return
 
         # Normalize response shape and ensure it carries our request-id
-        data = _normalize_response(data, request_id)
+        latency_ms = (time.monotonic() - start) * 1000
+        data = _normalize_response(data, request_id, latency_ms=latency_ms)
         usage = data["usage"]
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
 
-        latency_ms = (time.monotonic() - start) * 1000
         self._record_metrics(
             resp.status_code, latency_ms, prompt_tokens, completion_tokens
         )
