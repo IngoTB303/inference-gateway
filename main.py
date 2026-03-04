@@ -82,30 +82,44 @@ metrics = Metrics()
 def _normalize_response(
     data: dict[str, Any], request_id: str, latency_ms: float = 0.0
 ) -> dict[str, Any]:
-    """Ensure response has all expected fields regardless of backend."""
-    data["id"] = request_id
-    data.setdefault("object", "chat.completion")
-    data.setdefault("model", "unknown")
+    """Return a clean, spec-compliant response dict regardless of backend shape.
 
+    Only the documented fields are included; any extra keys sent by the backend
+    (e.g. created, system_fingerprint, timings, logprobs) are silently dropped
+    so that all backends produce an identical response contract.
+    """
+    clean_choices = []
     for choice in data.get("choices", []):
-        choice.setdefault("index", 0)
-        choice.setdefault("finish_reason", "stop")
         msg = choice.get("message", {})
-        msg.setdefault("role", "assistant")
-        msg.setdefault("content", "")
-        choice["message"] = msg
+        clean_choices.append(
+            {
+                "index": choice.get("index", 0),
+                "message": {
+                    "role": msg.get("role", "assistant"),
+                    "content": msg.get("content", ""),
+                },
+                "finish_reason": choice.get("finish_reason", "stop"),
+            }
+        )
 
-    usage = data.get("usage", {})
-    usage.setdefault("prompt_tokens", 0)
-    usage.setdefault("completion_tokens", 0)
-    usage.setdefault(
-        "total_tokens",
-        usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
-    )
-    usage["latency_ms"] = round(latency_ms, 2)
-    data["usage"] = usage
+    usage_raw = data.get("usage", {})
+    prompt_tokens = usage_raw.get("prompt_tokens", 0)
+    completion_tokens = usage_raw.get("completion_tokens", 0)
 
-    return data
+    return {
+        "id": request_id,
+        "object": "chat.completion",
+        "model": data.get("model", "unknown"),
+        "choices": clean_choices,
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": usage_raw.get(
+                "total_tokens", prompt_tokens + completion_tokens
+            ),
+            "latency_ms": round(latency_ms, 2),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

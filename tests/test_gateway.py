@@ -826,6 +826,60 @@ def test_backend_missing_object_normalized(backend_gateway):
 
 
 @respx.mock
+def test_backend_extra_fields_stripped(backend_gateway):
+    """Extra keys from the backend (created, system_fingerprint, etc.) are stripped."""
+    respx.post("http://test-backend/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "backend-id",
+                "object": "chat.completion",
+                "created": 1700000000,
+                "model": "llama-3",
+                "system_fingerprint": "fp_abc123",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "hi"},
+                        "finish_reason": "stop",
+                        "logprobs": None,
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 2,
+                    "total_tokens": 5,
+                    "prompt_tokens_details": {"cached_tokens": 0},
+                },
+                "timings": {"prompt_n": 3, "predicted_n": 2},
+            },
+        )
+    )
+    status, body, _ = _post(
+        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+    )
+    assert status == 200
+
+    # Only the documented top-level keys should be present
+    allowed_keys = {"id", "object", "model", "choices", "usage", "backend"}
+    assert set(body.keys()) <= allowed_keys, (
+        f"Unexpected top-level keys: {set(body.keys()) - allowed_keys}"
+    )
+
+    # Choices should only have documented keys
+    choice = body["choices"][0]
+    assert set(choice.keys()) == {"index", "message", "finish_reason"}
+
+    # Usage should only have documented keys
+    assert set(body["usage"].keys()) == {
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "latency_ms",
+    }
+
+
+@respx.mock
 def test_streaming_logs_usage(backend_gateway):
     """Streaming backend that sends usage in final chunk updates metrics."""
     usage_chunk = json.dumps(
