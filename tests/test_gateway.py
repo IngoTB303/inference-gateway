@@ -934,6 +934,49 @@ def test_config_backend_latency_in_usage(multi_backend_gateway):
     assert body["usage"]["latency_ms"] >= 0
 
 
+@respx.mock
+def test_model_field_not_forwarded_to_backend(multi_backend_gateway):
+    """Gateway routing key ('model') is stripped before forwarding to HTTP backend.
+
+    This prevents errors like vLLM's 'model does not exist' when the user
+    sets model to a gateway backend name rather than an actual LLM model name.
+    """
+    captured = {}
+
+    def capture(request):
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
+        )
+
+    respx.post("http://test-backend/v1/chat/completions").mock(side_effect=capture)
+
+    _post(
+        f"{multi_backend_gateway}/v1/chat/completions",
+        {
+            "model": "remote-modal-llama",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+    )
+
+    assert "model" not in captured["body"], (
+        "Gateway backend name must not be forwarded as 'model' to the upstream server"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Live backend tests (#9) — skipped by default; run with: uv run pytest -m live
 # ---------------------------------------------------------------------------

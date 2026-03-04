@@ -365,12 +365,17 @@ class GatewayHandler(BaseHTTPRequestHandler):
         assert gateway_config is not None
         backend = gateway_config.get_backend_for_model(model)
 
+        # The "model" field in the request is the gateway routing key, not a
+        # backend model name.  Strip it before forwarding so that backends
+        # (e.g. vLLM) do not reject an unknown name.
+        backend_body = {k: v for k, v in forward_body.items() if k != "model"}
+
         if stream:
             # Streaming: delegate to echo or proxy path based on backend type
             if isinstance(backend, HttpBackend):
                 try:
                     self._proxy_stream(
-                        request_id, backend.completions_url, forward_body, start, log
+                        request_id, backend.completions_url, backend_body, start, log
                     )
                 except httpx.TimeoutException:
                     latency_ms = (time.monotonic() - start) * 1000
@@ -392,7 +397,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
         # Non-streaming: call backend.generate()
         try:
-            data = backend.generate(forward_body, request_id)
+            data = backend.generate(backend_body, request_id)
         except httpx.TimeoutException:
             latency_ms = (time.monotonic() - start) * 1000
             self._record_metrics(504, latency_ms, 0, 0)

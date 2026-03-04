@@ -13,7 +13,7 @@ post {
 body:json {
   {
     "model": "remote-modal-llama",
-    "messages": [{"role": "user", "content": "Say hi in one word"}],
+    "messages": [{"role": "user", "content": "Hi, what is your key advantage?"}],
     "max_tokens": 10
   }
 }
@@ -22,15 +22,15 @@ tests {
   test("status is 200", function() {
     expect(res.status).to.equal(200);
   });
-
+  
   test("backend field is 'remote-modal-llama'", function() {
     expect(res.body.backend).to.equal("remote-modal-llama");
   });
-
+  
   test("choices has at least one entry", function() {
     expect(res.body.choices).to.have.length.above(0);
   });
-
+  
   test("usage.latency_ms is present and non-negative", function() {
     expect(res.body.usage).to.have.property("latency_ms");
     expect(res.body.usage.latency_ms).to.be.at.least(0);
