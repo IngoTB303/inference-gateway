@@ -14,6 +14,8 @@ import pytest
 import respx
 
 import main
+from gateway.backends.http_backend import HttpBackend
+from gateway.config import GatewayConfig
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -57,9 +59,15 @@ def _get(url: str):
 
 @pytest.fixture
 def gateway(monkeypatch):
-    """Echo-mode gateway on a free port."""
+    """Echo-mode gateway on a free port (legacy settings path)."""
     monkeypatch.setattr(main.settings, "backend_url", None)
-    for f in ("request_count", "error_count", "prompt_tokens_total", "completion_tokens_total"):
+    monkeypatch.setattr(main, "gateway_config", None)  # use legacy path
+    for f in (
+        "request_count",
+        "error_count",
+        "prompt_tokens_total",
+        "completion_tokens_total",
+    ):
         monkeypatch.setattr(main.metrics, f, 0)
     monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
 
@@ -73,9 +81,15 @@ def gateway(monkeypatch):
 
 @pytest.fixture
 def backend_gateway(monkeypatch):
-    """Backend-proxy gateway pointing at the test mock URL."""
+    """Backend-proxy gateway pointing at the test mock URL (legacy settings path)."""
     monkeypatch.setattr(main.settings, "backend_url", "http://test-backend")
-    for f in ("request_count", "error_count", "prompt_tokens_total", "completion_tokens_total"):
+    monkeypatch.setattr(main, "gateway_config", None)  # use legacy path
+    for f in (
+        "request_count",
+        "error_count",
+        "prompt_tokens_total",
+        "completion_tokens_total",
+    ):
         monkeypatch.setattr(main.metrics, f, 0)
     monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
 
@@ -97,12 +111,6 @@ def test_healthz(gateway):
     assert status == 200
     assert body == {"status": "ok"}
 
-
-def test_models_list(gateway):
-    status, body = _get(f"{gateway}/v1/models")
-    assert status == 200
-    assert isinstance(body.get("data"), list)
-    assert len(body["data"]) > 0
 
 
 def test_unknown_route_get(gateway):
@@ -245,14 +253,18 @@ def test_echo_streaming(gateway):
 def test_backend_success(backend_gateway):
     mock_body = {
         "id": "backend-id",
-        "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "choices": [
+            {"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+        ],
         "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
     }
     respx.post("http://test-backend/v1/chat/completions").mock(
         return_value=httpx.Response(200, json=mock_body)
     )
 
-    status, body, headers = _post(f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    status, body, headers = _post(
+        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+    )
     assert status == 200
     assert "id" in body
     assert headers.get("X-Request-ID") is not None
@@ -264,7 +276,9 @@ def test_backend_5xx(backend_gateway):
         return_value=httpx.Response(500, json={"error": "internal"})
     )
 
-    status, body, _ = _post(f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    status, body, _ = _post(
+        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+    )
     assert status == 502
     assert body["error"] == "backend_error"
 
@@ -275,7 +289,9 @@ def test_backend_timeout(backend_gateway):
         side_effect=httpx.TimeoutException("timed out")
     )
 
-    status, body, _ = _post(f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    status, body, _ = _post(
+        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+    )
     assert status == 504
     assert body["error"] == "gateway_timeout"
 
@@ -286,7 +302,9 @@ def test_backend_connection_error(backend_gateway):
         side_effect=httpx.ConnectError("refused")
     )
 
-    status, body, _ = _post(f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    status, body, _ = _post(
+        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+    )
     assert status == 502
     assert body["error"] == "backend_unavailable"
 
@@ -309,3 +327,506 @@ def test_metrics_error_count(gateway):
 
     _, metrics_body = _get(f"{gateway}/metrics")
     assert metrics_body["error_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Extended validation (#1 + #6)
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_message_missing_role(gateway):
+    status, body, _ = _post(
+        f"{gateway}/v1/chat/completions",
+        {"messages": [{"content": "hi"}]},
+    )
+    assert status == 400
+    assert body["error"] == "invalid_messages"
+
+
+def test_invalid_message_missing_content(gateway):
+    status, body, _ = _post(
+        f"{gateway}/v1/chat/completions",
+        {"messages": [{"role": "user"}]},
+    )
+    assert status == 400
+    assert body["error"] == "invalid_messages"
+
+
+def test_invalid_message_bad_role(gateway):
+    status, body, _ = _post(
+        f"{gateway}/v1/chat/completions",
+        {"messages": [{"role": "unknown", "content": "hi"}]},
+    )
+    assert status == 400
+    assert body["error"] == "invalid_messages"
+
+
+def test_invalid_stream_type(gateway):
+    status, body, _ = _post(
+        f"{gateway}/v1/chat/completions",
+        {"messages": [{"role": "user", "content": "hi"}], "stream": "yes"},
+    )
+    assert status == 400
+    assert body["error"] == "invalid_stream"
+
+
+def test_invalid_max_tokens_type(gateway):
+    status, body, _ = _post(
+        f"{gateway}/v1/chat/completions",
+        {"messages": [{"role": "user", "content": "hi"}], "max_tokens": "fifty"},
+    )
+    assert status == 400
+    assert body["error"] == "invalid_max_tokens"
+
+
+def test_invalid_max_tokens_range(gateway):
+    status, body, _ = _post(
+        f"{gateway}/v1/chat/completions",
+        {"messages": [{"role": "user", "content": "hi"}], "max_tokens": -1},
+    )
+    assert status == 400
+    assert body["error"] == "invalid_max_tokens"
+
+
+def test_invalid_temperature_range(gateway):
+    status, body, _ = _post(
+        f"{gateway}/v1/chat/completions",
+        {"messages": [{"role": "user", "content": "hi"}], "temperature": 5.0},
+    )
+    assert status == 400
+    assert body["error"] == "invalid_temperature"
+
+
+def test_invalid_stop_type(gateway):
+    status, body, _ = _post(
+        f"{gateway}/v1/chat/completions",
+        {"messages": [{"role": "user", "content": "hi"}], "stop": 123},
+    )
+    assert status == 400
+    assert body["error"] == "invalid_stop"
+
+
+def test_model_default_omitted(gateway):
+    """Omitting model should succeed."""
+    status, body, _ = _post(
+        f"{gateway}/v1/chat/completions",
+        {"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert status == 200
+
+
+@respx.mock
+def test_full_contract_fields_forwarded(backend_gateway):
+    """Backend receives max_tokens, temperature, stop in the forwarded request."""
+    captured = {}
+
+    def capture(request):
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "id": "x",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
+        )
+
+    respx.post("http://test-backend/v1/chat/completions").mock(side_effect=capture)
+
+    _post(
+        f"{backend_gateway}/v1/chat/completions",
+        {
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 100,
+            "temperature": 0.7,
+            "stop": ["\n"],
+        },
+    )
+
+    assert captured["body"]["max_tokens"] == 100
+    assert captured["body"]["temperature"] == 0.7
+    assert captured["body"]["stop"] == ["\n"]
+
+
+# ---------------------------------------------------------------------------
+# Multi-backend routing (#8)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def multi_backend_gateway(monkeypatch):
+    """Gateway with config-based multi-backend routing (echo default + remote mock)."""
+    from gateway.backends.echo import EchoBackend
+
+    echo = EchoBackend(name="local")
+    remote = HttpBackend(name="remote-modal-llama", url="http://test-backend")
+    config = GatewayConfig(backends=[echo, remote], default_backend=echo)
+
+    monkeypatch.setattr(main, "gateway_config", config)
+    monkeypatch.setattr(main.settings, "backend_url", None)
+    for f in (
+        "request_count",
+        "error_count",
+        "prompt_tokens_total",
+        "completion_tokens_total",
+    ):
+        monkeypatch.setattr(main.metrics, f, 0)
+    monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
+
+    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{port}"
+    server.shutdown()
+
+
+def test_routing_by_model_echo(multi_backend_gateway):
+    """model: 'local' routes to echo backend and response has backend: 'local'."""
+    status, body, _ = _post(
+        f"{multi_backend_gateway}/v1/chat/completions",
+        {"model": "local", "messages": [{"role": "user", "content": "hello"}]},
+    )
+    assert status == 200
+    assert body["backend"] == "local"
+    assert body["choices"][0]["message"]["content"].startswith("Echo:")
+
+
+def test_routing_default_fallback(multi_backend_gateway):
+    """Omitting model falls back to default (echo) backend."""
+    status, body, _ = _post(
+        f"{multi_backend_gateway}/v1/chat/completions",
+        {"messages": [{"role": "user", "content": "hello"}]},
+    )
+    assert status == 200
+    assert body["backend"] == "local"
+
+
+def test_routing_unknown_model_fallback(multi_backend_gateway):
+    """Unknown model name falls back to default backend."""
+    status, body, _ = _post(
+        f"{multi_backend_gateway}/v1/chat/completions",
+        {
+            "model": "nonexistent-backend",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+    assert status == 200
+    assert body["backend"] == "local"
+
+
+@respx.mock
+def test_routing_by_model_remote(multi_backend_gateway):
+    """model: 'remote-modal-llama' routes to the HTTP backend."""
+    respx.post("http://test-backend/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "hi"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 2,
+                    "total_tokens": 5,
+                },
+            },
+        )
+    )
+    status, body, _ = _post(
+        f"{multi_backend_gateway}/v1/chat/completions",
+        {
+            "model": "remote-modal-llama",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+    assert status == 200
+    assert body["backend"] == "remote-modal-llama"
+
+
+@respx.mock
+def test_routing_by_model_vllm(monkeypatch):
+    """model: 'remote-modal-vllm' routes to the vllm backend and includes backend field."""
+    from gateway.backends.echo import EchoBackend
+
+    echo = EchoBackend(name="local")
+    vllm = HttpBackend(name="remote-modal-vllm", url="http://test-vllm-backend")
+    config = GatewayConfig(backends=[echo, vllm], default_backend=echo)
+
+    monkeypatch.setattr(main, "gateway_config", config)
+    monkeypatch.setattr(main.settings, "backend_url", None)
+    for f in ("request_count", "error_count", "prompt_tokens_total", "completion_tokens_total"):
+        monkeypatch.setattr(main.metrics, f, 0)
+    monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
+
+    respx.post("http://test-vllm-backend/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+            },
+        )
+    )
+
+    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, body, _ = _post(
+            f"http://127.0.0.1:{port}/v1/chat/completions",
+            {"model": "remote-modal-vllm", "messages": [{"role": "user", "content": "hello"}]},
+        )
+        assert status == 200
+        assert body["backend"] == "remote-modal-vllm"
+    finally:
+        server.shutdown()
+
+
+def test_backend_metadata_in_response(multi_backend_gateway):
+    """Every response includes a 'backend' field."""
+    status, body, _ = _post(
+        f"{multi_backend_gateway}/v1/chat/completions",
+        {"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert status == 200
+    assert "backend" in body
+
+
+def test_get_backends_endpoint(multi_backend_gateway):
+    """GET /v1/backends lists configured backends."""
+    status, body = _get(f"{multi_backend_gateway}/v1/backends")
+    assert status == 200
+    names = [b["name"] for b in body["backends"]]
+    assert "local" in names
+    assert "remote-modal-llama" in names
+    assert body["default"] == "local"
+
+
+def test_config_loading():
+    """load_config() correctly parses config.yaml and creates backend objects."""
+    from gateway.backends.echo import EchoBackend
+    from gateway.config import load_config
+
+    cfg = load_config("config.yaml")
+    assert cfg.default_backend.name == "local"
+    assert isinstance(cfg.default_backend, EchoBackend)
+    names = [b.name for b in cfg.all_backends]
+    assert "local" in names
+    assert "remote-modal-llama" in names
+    assert "remote-modal-vllm" in names
+
+
+def test_no_config_fallback(tmp_path, monkeypatch):
+    """When config.yaml is absent, load_config falls back to BACKEND_URL env var."""
+    from gateway.config import load_config
+
+    monkeypatch.setenv("BACKEND_URL", "http://fallback-backend")
+    cfg = load_config(tmp_path / "nonexistent.yaml")
+    assert cfg.default_backend.name == "remote"
+    assert isinstance(cfg.default_backend, HttpBackend)
+
+
+# ---------------------------------------------------------------------------
+# Auth and policy hooks (#2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def auth_gateway(monkeypatch):
+    """Gateway with API_KEY=test-secret-key."""
+    monkeypatch.setattr(main.settings, "backend_url", None)
+    monkeypatch.setattr(main.settings, "api_key", "test-secret-key")
+    for f in (
+        "request_count",
+        "error_count",
+        "prompt_tokens_total",
+        "completion_tokens_total",
+    ):
+        monkeypatch.setattr(main.metrics, f, 0)
+    monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
+
+    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{port}"
+    server.shutdown()
+
+
+def test_auth_no_header_401(auth_gateway):
+    status, body, _ = _post(f"{auth_gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    assert status == 401
+    assert body["error"] == "unauthorized"
+
+
+def test_auth_wrong_key_401(auth_gateway):
+    status, body, _ = _post(
+        f"{auth_gateway}/v1/chat/completions",
+        COMPLETION_PAYLOAD,
+        headers={"Authorization": "Bearer wrong-key"},
+    )
+    assert status == 401
+    assert body["error"] == "unauthorized"
+
+
+def test_auth_correct_bearer_200(auth_gateway):
+    status, _, _ = _post(
+        f"{auth_gateway}/v1/chat/completions",
+        COMPLETION_PAYLOAD,
+        headers={"Authorization": "Bearer test-secret-key"},
+    )
+    assert status == 200
+
+
+def test_auth_api_key_scheme(auth_gateway):
+    status, _, _ = _post(
+        f"{auth_gateway}/v1/chat/completions",
+        COMPLETION_PAYLOAD,
+        headers={"Authorization": "Api-Key test-secret-key"},
+    )
+    assert status == 200
+
+
+def test_no_auth_configured(gateway):
+    """When no API_KEY is set, requests succeed without Authorization header."""
+    status, _, _ = _post(f"{gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    assert status == 200
+
+
+# ---------------------------------------------------------------------------
+# Response normalization (#7)
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_backend_missing_usage_normalized(backend_gateway):
+    """Backend response without usage gets normalized to zeros."""
+    respx.post("http://test-backend/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "hi"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+    )
+    status, body, _ = _post(
+        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+    )
+    assert status == 200
+    assert body["usage"]["prompt_tokens"] == 0
+    assert body["usage"]["completion_tokens"] == 0
+    assert body["usage"]["total_tokens"] == 0
+
+
+@respx.mock
+def test_backend_missing_model_normalized(backend_gateway):
+    """Backend response without model gets 'unknown'."""
+    respx.post("http://test-backend/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "hi"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
+        )
+    )
+    status, body, _ = _post(
+        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+    )
+    assert status == 200
+    assert body["model"] == "unknown"
+
+
+@respx.mock
+def test_backend_missing_object_normalized(backend_gateway):
+    """Backend response without object gets 'chat.completion'."""
+    respx.post("http://test-backend/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "hi"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
+        )
+    )
+    status, body, _ = _post(
+        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+    )
+    assert status == 200
+    assert body["object"] == "chat.completion"
+
+
+@respx.mock
+def test_streaming_logs_usage(backend_gateway):
+    """Streaming backend that sends usage in final chunk updates metrics."""
+    usage_chunk = json.dumps(
+        {
+            "id": "x",
+            "object": "chat.completion.chunk",
+            "choices": [
+                {"index": 0, "delta": {"content": "hi"}, "finish_reason": None}
+            ],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3},
+        }
+    )
+    sse_body = f"data: {usage_chunk}\n\ndata: [DONE]\n\n"
+
+    respx.post("http://test-backend/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            content=sse_body.encode(),
+            headers={"Content-Type": "text/event-stream"},
+        )
+    )
+
+    payload = {**COMPLETION_PAYLOAD, "stream": True}
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        f"{backend_gateway}/v1/chat/completions",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        resp.read()  # consume stream
+
+    _, metrics_body = _get(f"{backend_gateway}/metrics")
+    assert metrics_body["prompt_tokens_total"] == 7
+    assert metrics_body["completion_tokens_total"] == 3

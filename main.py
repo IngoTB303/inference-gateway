@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 import os
+from pathlib import Path
 
 load_dotenv()
 
@@ -34,9 +35,26 @@ class Settings:
     backend_url: str | None = field(
         default_factory=lambda: os.environ.get("BACKEND_URL") or None
     )
+    api_key: str | None = field(
+        default_factory=lambda: os.environ.get("API_KEY") or None
+    )
 
 
 settings = Settings()
+
+
+# ---------------------------------------------------------------------------
+# Multi-backend config (loaded once at startup; None if no config.yaml)
+# ---------------------------------------------------------------------------
+
+from gateway.config import GatewayConfig, load_config  # noqa: E402
+from gateway.backends.http_backend import HttpBackend  # noqa: E402
+
+# Load config.yaml if present; otherwise gateway_config stays None and the
+# handler falls back to the legacy settings.backend_url path.
+gateway_config: GatewayConfig | None = (
+    load_config() if Path("config.yaml").exists() else None
+)
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +72,94 @@ class Metrics:
 
 
 metrics = Metrics()
+
+
+# ---------------------------------------------------------------------------
+# Response normalization
+# ---------------------------------------------------------------------------
+
+
+def _normalize_response(data: dict[str, Any], request_id: str) -> dict[str, Any]:
+    """Ensure response has all expected fields regardless of backend."""
+    data["id"] = request_id
+    data.setdefault("object", "chat.completion")
+    data.setdefault("model", "unknown")
+
+    for choice in data.get("choices", []):
+        choice.setdefault("index", 0)
+        choice.setdefault("finish_reason", "stop")
+        msg = choice.get("message", {})
+        msg.setdefault("role", "assistant")
+        msg.setdefault("content", "")
+        choice["message"] = msg
+
+    usage = data.get("usage", {})
+    usage.setdefault("prompt_tokens", 0)
+    usage.setdefault("completion_tokens", 0)
+    usage.setdefault(
+        "total_tokens",
+        usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
+    )
+    data["usage"] = usage
+
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Request validation
+# ---------------------------------------------------------------------------
+
+
+def _validate_body(body: dict[str, Any]) -> str | None:
+    """Validate request body fields. Returns an error key or None if valid."""
+    # model: string if present
+    model = body.get("model")
+    if model is not None and not isinstance(model, str):
+        return "invalid_model"
+
+    # messages: already checked non-empty above; validate each element
+    messages = body.get("messages", [])
+    for msg in messages:
+        if not isinstance(msg, dict):
+            return "invalid_messages"
+        if "role" not in msg or "content" not in msg:
+            return "invalid_messages"
+        if msg["role"] not in ("system", "user", "assistant"):
+            return "invalid_messages"
+
+    # stream: boolean if present
+    stream = body.get("stream")
+    if stream is not None and not isinstance(stream, bool):
+        return "invalid_stream"
+
+    # max_tokens: positive integer in sane range if present
+    max_tokens = body.get("max_tokens")
+    if max_tokens is not None:
+        if not isinstance(max_tokens, int) or isinstance(max_tokens, bool):
+            return "invalid_max_tokens"
+        if max_tokens < 1 or max_tokens > 100_000:
+            return "invalid_max_tokens"
+
+    # temperature: float/int in [0, 2] if present
+    temperature = body.get("temperature")
+    if temperature is not None:
+        if not isinstance(temperature, (int, float)) or isinstance(temperature, bool):
+            return "invalid_temperature"
+        if temperature < 0 or temperature > 2:
+            return "invalid_temperature"
+
+    # stop: string or list of strings if present
+    stop = body.get("stop")
+    if stop is not None:
+        if isinstance(stop, str):
+            pass
+        elif isinstance(stop, list):
+            if not all(isinstance(s, str) for s in stop):
+                return "invalid_stop"
+        else:
+            return "invalid_stop"
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -106,23 +212,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/healthz":
             self._send_json(200, {"status": "ok"})
-        elif self.path == "/v1/models":
-            if settings.backend_url:
-                self._proxy_models()
-            else:
-                self._send_json(
-                    200,
-                    {
-                        "object": "list",
-                        "data": [
-                            {
-                                "id": "echo",
-                                "object": "model",
-                                "owned_by": "inference-gateway",
-                            }
-                        ],
-                    },
-                )
         elif self.path == "/metrics":
             self._send_json(
                 200,
@@ -134,6 +223,20 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     "completion_tokens_total": metrics.completion_tokens_total,
                 },
             )
+        elif self.path == "/v1/backends":
+            if gateway_config is not None:
+                self._send_json(
+                    200,
+                    {
+                        "backends": [
+                            {"name": b.name, "type": type(b).__name__}
+                            for b in gateway_config.all_backends
+                        ],
+                        "default": gateway_config.default_backend.name,
+                    },
+                )
+            else:
+                self._send_json(404, {"error": "not_found"})
         else:
             self._send_json(404, {"error": "not_found"})
 
@@ -142,6 +245,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
 
     def do_POST(self) -> None:
+        if not self._check_auth():
+            return
         if self.path == "/v1/chat/completions":
             self._handle_chat_completions()
         else:
@@ -165,11 +270,18 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid_json"})
             return
 
-        # Basic validation
+        # Basic structure check
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
             self._record_metrics(400, (time.monotonic() - start) * 1000, 0, 0)
             self._send_json(400, {"error": "invalid_messages"})
+            return
+
+        # Full validation
+        error = _validate_body(body)
+        if error:
+            self._record_metrics(400, (time.monotonic() - start) * 1000, 0, 0)
+            self._send_json(400, {"error": error})
             return
 
         stream = body.get("stream", False)
@@ -181,9 +293,25 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 prompt = msg.get("content", "")
                 break
 
-        # Dispatch
-        if settings.backend_url:
-            self._handle_backend(request_id, body, stream, start, log)
+        model = body.get("model")
+
+        # Build a clean forward body with only known fields
+        forward_body: dict[str, Any] = {
+            "messages": messages,
+            "model": model or "default",
+            "stream": stream,
+        }
+        for key in ("max_tokens", "temperature", "stop"):
+            if key in body:
+                forward_body[key] = body[key]
+
+        # Dispatch — config-based routing takes precedence over legacy settings
+        if gateway_config is not None:
+            self._handle_with_config(
+                request_id, forward_body, model, prompt, stream, start, log
+            )
+        elif settings.backend_url:
+            self._handle_backend(request_id, forward_body, stream, start, log)
         else:
             self._handle_echo(request_id, prompt, stream, start, log)
 
@@ -215,6 +343,85 @@ class GatewayHandler(BaseHTTPRequestHandler):
         log.info(
             "POST /v1/chat/completions status=200 latency_ms=%.1f mode=echo", latency_ms
         )
+
+    def _handle_with_config(
+        self,
+        request_id: str,
+        forward_body: dict[str, Any],
+        model: str | None,
+        prompt: str,
+        stream: bool,
+        start: float,
+        log: logging.LoggerAdapter,
+    ) -> None:
+        """Route the request through the multi-backend config."""
+        assert gateway_config is not None
+        backend = gateway_config.get_backend_for_model(model)
+
+        if stream:
+            # Streaming: delegate to echo or proxy path based on backend type
+            if isinstance(backend, HttpBackend):
+                try:
+                    self._proxy_stream(
+                        request_id, backend.completions_url, forward_body, start, log
+                    )
+                except httpx.TimeoutException:
+                    latency_ms = (time.monotonic() - start) * 1000
+                    self._record_metrics(504, latency_ms, 0, 0)
+                    log.error("Backend timeout after %.1f ms", latency_ms)
+                    self._send_json(
+                        504, {"error": "gateway_timeout"}, request_id=request_id
+                    )
+                except httpx.RequestError as exc:
+                    latency_ms = (time.monotonic() - start) * 1000
+                    self._record_metrics(502, latency_ms, 0, 0)
+                    log.error("Backend connection error: %s", exc)
+                    self._send_json(
+                        502, {"error": "backend_unavailable"}, request_id=request_id
+                    )
+            else:
+                self._handle_echo(request_id, prompt, stream, start, log)
+            return
+
+        # Non-streaming: call backend.generate()
+        try:
+            data = backend.generate(forward_body, request_id)
+        except httpx.TimeoutException:
+            latency_ms = (time.monotonic() - start) * 1000
+            self._record_metrics(504, latency_ms, 0, 0)
+            log.error("Backend %s timeout after %.1f ms", backend.name, latency_ms)
+            self._send_json(504, {"error": "gateway_timeout"}, request_id=request_id)
+            return
+        except httpx.RequestError as exc:
+            latency_ms = (time.monotonic() - start) * 1000
+            self._record_metrics(502, latency_ms, 0, 0)
+            log.error("Backend %s connection error: %s", backend.name, exc)
+            self._send_json(
+                502, {"error": "backend_unavailable"}, request_id=request_id
+            )
+            return
+        except RuntimeError as exc:
+            latency_ms = (time.monotonic() - start) * 1000
+            self._record_metrics(502, latency_ms, 0, 0)
+            log.error("Backend %s error: %s", backend.name, exc)
+            self._send_json(502, {"error": "backend_error"}, request_id=request_id)
+            return
+
+        data = _normalize_response(data, request_id)
+        data["backend"] = backend.name
+
+        usage = data["usage"]
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+
+        latency_ms = (time.monotonic() - start) * 1000
+        self._record_metrics(200, latency_ms, prompt_tokens, completion_tokens)
+        log.info(
+            "POST /v1/chat/completions status=200 latency_ms=%.1f mode=config backend=%s",
+            latency_ms,
+            backend.name,
+        )
+        self._send_json(200, data, request_id=request_id)
 
     def _handle_backend(
         self,
@@ -273,9 +480,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             )
             return
 
-        # Ensure the response carries our request-id
-        data["id"] = request_id
-        usage = data.get("usage", {})
+        # Normalize response shape and ensure it carries our request-id
+        data = _normalize_response(data, request_id)
+        usage = data["usage"]
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
 
@@ -315,13 +522,23 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self.send_header("X-Request-ID", request_id)
                 self.end_headers()
 
+                prompt_tokens = 0
+                completion_tokens = 0
                 for line in resp.iter_lines():
                     self.wfile.write((line + "\n").encode())
+                    if line.startswith("data: ") and line != "data: [DONE]":
+                        try:
+                            chunk = json.loads(line[6:])
+                            if usage := chunk.get("usage"):
+                                prompt_tokens = usage.get("prompt_tokens", 0)
+                                completion_tokens = usage.get("completion_tokens", 0)
+                        except (json.JSONDecodeError, AttributeError):
+                            pass
                 self.wfile.write(b"\n")
                 self.wfile.flush()
 
         latency_ms = (time.monotonic() - start) * 1000
-        self._record_metrics(200, latency_ms, 0, 0)
+        self._record_metrics(200, latency_ms, prompt_tokens, completion_tokens)
         log.info(
             "POST /v1/chat/completions status=200 latency_ms=%.1f mode=backend-stream",
             latency_ms,
@@ -349,18 +566,26 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 
-    def _proxy_models(self) -> None:
-        assert settings.backend_url is not None
-        url = settings.backend_url.rstrip("/") + "/v1/models"
-        try:
-            with httpx.Client(timeout=10.0) as client:
-                resp = client.get(url)
-            self._send_json(resp.status_code, resp.json())
-        except httpx.TimeoutException:
-            self._send_json(504, {"error": "gateway_timeout"})
-        except httpx.RequestError as exc:
-            logger.error("Backend /v1/models error: %s", exc)
-            self._send_json(502, {"error": "backend_unavailable"})
+    # ------------------------------------------------------------------
+    # Auth
+    # ------------------------------------------------------------------
+
+    def _check_auth(self) -> bool:
+        """Return True if auth passes. If auth fails, send 401 and return False."""
+        if settings.api_key is None:
+            return True
+
+        auth_header = self.headers.get("Authorization", "")
+        token: str | None = None
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        elif auth_header.startswith("Api-Key "):
+            token = auth_header[8:]
+
+        if token != settings.api_key:
+            self._send_json(401, {"error": "unauthorized"})
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # Utility methods
