@@ -12,10 +12,13 @@ from gateway.backends.base import BackendBase
 class HttpBackend(BackendBase):
     """POSTs to a configured URL that speaks the OpenAI API."""
 
-    def __init__(self, name: str, url: str, timeout: float = 60.0) -> None:
+    def __init__(
+        self, name: str, url: str, timeout: float = 60.0, model: str | None = None
+    ) -> None:
         self.name = name
         self.base_url = url.rstrip("/")
         self.timeout = timeout
+        self.model = model  # if set, injected as "model" in the forwarded body
 
     @property
     def completions_url(self) -> str:

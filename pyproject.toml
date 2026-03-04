@@ -15,6 +15,10 @@ inference-gateway = "main:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+addopts = "-m 'not live'"
+markers = [
+    "live: mark test as requiring a live backend (deselected by default)",
+]
 
 [dependency-groups]
 dev = [

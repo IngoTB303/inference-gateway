@@ -33,6 +33,11 @@ tests {
   test("X-Request-ID response header is present", function() {
     expect(res.headers).to.have.property("x-request-id");
   });
+  
+  test("usage.latency_ms is present and non-negative", function() {
+    expect(res.body.usage).to.have.property("latency_ms");
+    expect(res.body.usage.latency_ms).to.be.at.least(0);
+  });
 }
 
 docs {

@@ -101,11 +101,11 @@ default_backend: local
   "model": "<backend-model-name>",
   "backend": "<gateway-backend-name>",
   "choices": [{"index": 0, "message": {"role": "assistant", "content": "..."}, "finish_reason": "stop"}],
-  "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+  "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "latency_ms": 42.15}
 }
 ```
 
-The `backend` field tells the client which gateway backend handled the request.
+The `backend` field tells the client which gateway backend handled the request. `latency_ms` is the gateway-measured wall-clock time for the request in milliseconds.
 
 ---
 
@@ -196,7 +196,21 @@ uv run pytest tests/test_gateway.py::test_routing_by_model_echo   # single test
 
 The suite starts real `HTTPServer` instances on free ports and uses [respx](https://lundberg.github.io/respx/) to mock backend `httpx` calls. No running backend is required.
 
-**47 tests** covering: GET endpoints, echo shape, request-ID, validation errors (400), auth (401), SSE streaming, backend proxy, response normalization, multi-backend routing, metrics.
+**51 tests** covering: GET endpoints, echo shape, request-ID, validation errors (400), auth (401), SSE streaming, backend proxy, response normalization, multi-backend routing, metrics, `latency_ms` in usage.
+
+### Live backend tests
+
+Tests that hit real backends are marked `@pytest.mark.live` and **skipped by default**. Run them when backends are available:
+
+```bash
+# All live tests
+uv run pytest -m live -v
+
+# Single live test
+uv run pytest -m live tests/test_gateway.py::test_live_remote_modal_llama
+```
+
+Live tests skip gracefully (rather than fail) when a backend returns 502/504.
 
 ### Bruno collection
 

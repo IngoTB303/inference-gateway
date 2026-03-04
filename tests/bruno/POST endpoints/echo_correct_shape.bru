@@ -33,4 +33,9 @@ tests {
   test("usage field is present", function() {
     expect(res.body).to.have.property("usage");
   });
+  
+  test("usage.latency_ms is present and non-negative", function() {
+    expect(res.body.usage).to.have.property("latency_ms");
+    expect(res.body.usage.latency_ms).to.be.at.least(0);
+  });
 }
