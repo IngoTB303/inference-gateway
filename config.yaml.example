@@ -5,6 +5,9 @@
 # Each backend entry needs at minimum: name, type
 # HTTP backends also need: url
 # Optional per-backend: timeout (seconds, default 60)
+#                        model  — forwarded as "model" in the request body;
+#                                 required for servers that validate this field
+#                                 (e.g. vLLM).  Omit for llama.cpp.
 #
 # Route requests by setting "model" in the request body to a backend name.
 # Requests with no "model" or an unrecognized name fall back to default_backend.
@@ -27,5 +30,6 @@ backends:
     type: http
     url: https://your-modal-username--relay-vllm-server-web.modal.run/
     timeout: 120
+    model: default   # vLLM requires this field; any string is accepted
 
 default_backend: local

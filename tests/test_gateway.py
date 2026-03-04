@@ -15,7 +15,7 @@ import respx
 
 import main
 from gateway.backends.http_backend import HttpBackend
-from gateway.config import GatewayConfig
+from gateway.config import GatewayConfig, load_config
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -27,7 +27,7 @@ COMPLETION_PAYLOAD = {
 }
 
 
-def _post(url: str, body: dict, headers: dict | None = None):
+def _post(url: str, body: dict, headers: dict | None = None, timeout: float = 30.0):
     """POST JSON body; returns (status, body_dict, response_headers)."""
     data = json.dumps(body).encode()
     req = urllib.request.Request(
@@ -37,7 +37,7 @@ def _post(url: str, body: dict, headers: dict | None = None):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read()), resp.headers
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read()), e.headers
@@ -50,6 +50,15 @@ def _get(url: str):
             return resp.status, json.loads(resp.read())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read())
+
+
+def _live_timeout(backend_name: str, extra: float = 30.0) -> float:
+    """Return the configured backend timeout + extra seconds for live test clients."""
+    cfg = load_config("config.yaml")
+    backend = cfg.get_backend_for_model(backend_name)
+    if isinstance(backend, HttpBackend):
+        return backend.timeout + extra
+    return extra
 
 
 # ---------------------------------------------------------------------------
@@ -1098,6 +1107,7 @@ def test_live_local_llama(live_gateway):
                 "messages": [{"role": "user", "content": "Say hi"}],
                 "max_tokens": 10,
             },
+            timeout=_live_timeout("local-llama"),
         )
     except urllib.error.HTTPError as e:
         status = e.code
@@ -1121,6 +1131,7 @@ def test_live_remote_modal_llama(live_gateway):
                 "messages": [{"role": "user", "content": "Say hi"}],
                 "max_tokens": 10,
             },
+            timeout=_live_timeout("remote-modal-llama"),
         )
     except urllib.error.HTTPError as e:
         status = e.code
@@ -1144,6 +1155,7 @@ def test_live_remote_modal_vllm(live_gateway):
                 "messages": [{"role": "user", "content": "Say hi"}],
                 "max_tokens": 10,
             },
+            timeout=_live_timeout("remote-modal-vllm"),
         )
     except urllib.error.HTTPError as e:
         status = e.code
@@ -1157,38 +1169,23 @@ def test_live_remote_modal_vllm(live_gateway):
 
 
 @pytest.mark.live
-def test_live_backend_timeout(monkeypatch):
-    """Backend that does not respond within timeout triggers a 504."""
-    from gateway.backends.echo import EchoBackend as _EchoBackend
+def test_live_backend_timeout(live_gateway, monkeypatch):
+    """A 1-second timeout on a slow backend triggers a 504."""
+    assert main.gateway_config is not None
+    backend = main.gateway_config.get_backend_for_model("remote-modal-vllm")
+    if not isinstance(backend, HttpBackend):
+        pytest.skip("remote-modal-vllm not configured as HTTP backend")
 
-    echo = _EchoBackend(name="local")
-    unreachable = HttpBackend(
-        name="unreachable", url="http://127.0.0.1:19999", timeout=0.1
+    monkeypatch.setattr(backend, "timeout", 1.0)
+
+    status, body, _ = _post(
+        f"{live_gateway}/v1/chat/completions",
+        {"model": "remote-modal-vllm", "messages": [{"role": "user", "content": "hi"}]},
+        timeout=10.0,
     )
-    config = GatewayConfig(backends=[echo, unreachable], default_backend=echo)
 
-    monkeypatch.setattr(main, "gateway_config", config)
-    monkeypatch.setattr(main.settings, "backend_url", None)
-    monkeypatch.setattr(main.settings, "api_key", None)
-    for f in (
-        "request_count",
-        "error_count",
-        "prompt_tokens_total",
-        "completion_tokens_total",
-    ):
-        monkeypatch.setattr(main.metrics, f, 0)
-    monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
+    if status == 502:
+        pytest.skip("remote-modal-vllm backend not reachable (502)")
 
-    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        status, body, _ = _post(
-            f"http://127.0.0.1:{port}/v1/chat/completions",
-            {"model": "unreachable", "messages": [{"role": "user", "content": "hi"}]},
-        )
-        assert status == 504
-        assert body["error"] == "gateway_timeout"
-    finally:
-        server.shutdown()
+    assert status == 504
+    assert body["error"] == "gateway_timeout"

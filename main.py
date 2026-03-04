@@ -232,12 +232,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if self.path == "/healthz":
             self._send_json(200, {"status": "ok"})
         elif self.path == "/metrics":
+            count = metrics.request_count
+            avg_latency_ms = metrics.total_latency_ms / count if count > 0 else 0.0
             self._send_json(
                 200,
                 {
-                    "request_count": metrics.request_count,
+                    "request_count": count,
                     "error_count": metrics.error_count,
-                    "total_latency_ms": round(metrics.total_latency_ms, 2),
+                    "avg_latency_ms": round(avg_latency_ms, 2),
                     "prompt_tokens_total": metrics.prompt_tokens_total,
                     "completion_tokens_total": metrics.completion_tokens_total,
                 },
@@ -382,7 +384,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
         # The "model" field in the request is the gateway routing key, not a
         # backend model name.  Strip it before forwarding so that backends
         # (e.g. vLLM) do not reject an unknown name.
+        # If the backend config specifies a model override, inject it instead.
         backend_body = {k: v for k, v in forward_body.items() if k != "model"}
+        if isinstance(backend, HttpBackend) and backend.model is not None:
+            backend_body["model"] = backend.model
 
         if stream:
             # Streaming: delegate to echo or proxy path based on backend type

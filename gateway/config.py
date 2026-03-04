@@ -23,7 +23,8 @@ def _make_backend(entry: dict[str, Any]) -> BackendBase:
     if backend_type in ("http", "llamacpp", "vllm"):
         url = entry["url"]
         timeout = float(entry.get("timeout", 60.0))
-        return HttpBackend(name=name, url=url, timeout=timeout)
+        model = entry.get("model")  # optional: forwarded as "model" in request body
+        return HttpBackend(name=name, url=url, timeout=timeout, model=model)
 
     raise ValueError(f"Unknown backend type: {backend_type!r}")
 
