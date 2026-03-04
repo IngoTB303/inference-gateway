@@ -1,0 +1,30 @@
+meta {
+  name: Metrics - baseline
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/metrics
+  body: none
+  auth: inherit
+}
+
+script:post-response {
+  bru.setVar("metrics_baseline_count", res.body.request_count);
+  bru.setVar("metrics_baseline_prompt_tokens", res.body.prompt_tokens_total);
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("request_count is present", function() {
+    expect(res.body).to.have.property("request_count");
+  });
+
+  test("prompt_tokens_total is present", function() {
+    expect(res.body).to.have.property("prompt_tokens_total");
+  });
+}

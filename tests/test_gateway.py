@@ -61,6 +61,7 @@ def _get(url: str):
 def gateway(monkeypatch):
     """Echo-mode gateway on a free port (legacy settings path)."""
     monkeypatch.setattr(main.settings, "backend_url", None)
+    monkeypatch.setattr(main.settings, "api_key", None)
     monkeypatch.setattr(main, "gateway_config", None)  # use legacy path
     for f in (
         "request_count",
@@ -83,6 +84,7 @@ def gateway(monkeypatch):
 def backend_gateway(monkeypatch):
     """Backend-proxy gateway pointing at the test mock URL (legacy settings path)."""
     monkeypatch.setattr(main.settings, "backend_url", "http://test-backend")
+    monkeypatch.setattr(main.settings, "api_key", None)
     monkeypatch.setattr(main, "gateway_config", None)  # use legacy path
     for f in (
         "request_count",
@@ -329,6 +331,15 @@ def test_metrics_error_count(gateway):
     assert metrics_body["error_count"] == 1
 
 
+def test_metrics_prompt_tokens_echo(gateway):
+    payload = {"model": "test", "messages": [{"role": "user", "content": "hello world"}]}
+    _post(f"{gateway}/v1/chat/completions", payload)
+
+    _, metrics_body = _get(f"{gateway}/metrics")
+    assert metrics_body["request_count"] == 1
+    assert metrics_body["prompt_tokens_total"] == 2  # len("hello world".split()) == 2
+
+
 # ---------------------------------------------------------------------------
 # Extended validation (#1 + #6)
 # ---------------------------------------------------------------------------
@@ -473,6 +484,7 @@ def multi_backend_gateway(monkeypatch):
 
     monkeypatch.setattr(main, "gateway_config", config)
     monkeypatch.setattr(main.settings, "backend_url", None)
+    monkeypatch.setattr(main.settings, "api_key", None)
     for f in (
         "request_count",
         "error_count",
@@ -567,6 +579,7 @@ def test_routing_by_model_vllm(monkeypatch):
 
     monkeypatch.setattr(main, "gateway_config", config)
     monkeypatch.setattr(main.settings, "backend_url", None)
+    monkeypatch.setattr(main.settings, "api_key", None)
     for f in ("request_count", "error_count", "prompt_tokens_total", "completion_tokens_total"):
         monkeypatch.setattr(main.metrics, f, 0)
     monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)

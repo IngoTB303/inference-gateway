@@ -4,21 +4,16 @@ meta {
   seq: 1
 }
 
-docs {
-  Routes to the local echo backend. No live backend required.
-  The "backend" field in the response should be "local".
-}
-
 post {
   url: {{base_url}}/v1/chat/completions
   body: json
-  auth: none
+  auth: inherit
 }
 
 body:json {
   {
     "model": "local",
-    "messages": [{"role": "user", "content": "hello"}]
+    "messages": [{"role": "user", "content": "Hello world!"}]
   }
 }
 
@@ -26,16 +21,21 @@ tests {
   test("status is 200", function() {
     expect(res.status).to.equal(200);
   });
-
+  
   test("id field is present", function() {
     expect(res.body).to.have.property("id");
   });
-
+  
   test("backend field is 'local'", function() {
     expect(res.body.backend).to.equal("local");
   });
-
+  
   test("X-Request-ID response header is present", function() {
     expect(res.headers).to.have.property("x-request-id");
   });
+}
+
+docs {
+  Routes to the local echo backend. No live backend required.
+  The "backend" field in the response should be "local".
 }

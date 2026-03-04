@@ -7,14 +7,14 @@ meta {
 post {
   url: {{base_url}}/v1/chat/completions
   body: json
-  auth: none
+  auth: inherit
 }
 
 body:json {
   {
     "model": "local",
     "messages": [{"role": "user", "content": "hello"}],
-    "max_tokens": -5
+    "max_tokens": -5.3
   }
 }
 
@@ -22,7 +22,7 @@ tests {
   test("status is 400", function() {
     expect(res.status).to.equal(400);
   });
-
+  
   test("error is invalid_max_tokens", function() {
     expect(res.body.error).to.equal("invalid_max_tokens");
   });

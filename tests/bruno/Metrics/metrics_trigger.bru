@@ -1,12 +1,7 @@
 meta {
-  name: Auth - correct key (200)
+  name: Metrics - trigger request
   type: http
   seq: 2
-}
-
-docs {
-  Requires the gateway to be running with API_KEY=test-key in .env.
-  Sends the correct Bearer token and expects a 200 response.
 }
 
 post {
@@ -18,7 +13,7 @@ post {
 body:json {
   {
     "model": "local",
-    "messages": [{"role": "user", "content": "hello"}]
+    "messages": [{"role": "user", "content": "hello world"}]
   }
 }
 

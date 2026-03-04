@@ -7,13 +7,13 @@ meta {
 post {
   url: {{base_url}}/v1/chat/completions
   body: json
-  auth: none
+  auth: inherit
 }
 
 body:json {
   {
     "model": "local",
-    "messages": [{"role": "user", "content": "hello"}],
+    "messages": [{"role": "user", "content": "Hello world!"}],
     "stream": true
   }
 }
@@ -22,7 +22,7 @@ tests {
   test("status is 200", function() {
     expect(res.status).to.equal(200);
   });
-
+  
   test("content-type is text/event-stream", function() {
     expect(res.headers["content-type"]).to.include("text/event-stream");
   });

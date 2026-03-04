@@ -1,0 +1,23 @@
+meta {
+  name: Metrics - verify increments
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/metrics
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("request_count incremented by 1", function() {
+    const baseline = bru.getVar("metrics_baseline_count");
+    expect(res.body.request_count).to.equal(baseline + 1);
+  });
+
+  test("prompt_tokens_total incremented by 2 (hello world = 2 words)", function() {
+    const baseline = bru.getVar("metrics_baseline_prompt_tokens");
+    expect(res.body.prompt_tokens_total).to.equal(baseline + 2);
+  });
+}
