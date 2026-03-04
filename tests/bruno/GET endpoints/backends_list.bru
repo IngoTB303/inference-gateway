@@ -1,0 +1,31 @@
+meta {
+  name: Backends List
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/v1/backends
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("backends is a non-empty array", function() {
+    expect(res.body.backends).to.be.an("array").with.length.greaterThan(0);
+  });
+
+  test("default field is present", function() {
+    expect(res.body).to.have.property("default");
+  });
+
+  test("each backend has a name", function() {
+    res.body.backends.forEach(function(b) {
+      expect(b).to.have.property("name");
+    });
+  });
+}

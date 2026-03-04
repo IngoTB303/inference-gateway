@@ -1,11 +1,12 @@
 meta {
-  name: Backend Success
+  name: Backend Success (echo)
   type: http
   seq: 1
 }
 
 docs {
-  Requires the gateway to be running with BACKEND_URL set to a live backend (e.g. llama.cpp).
+  Routes to the local echo backend. No live backend required.
+  The "backend" field in the response should be "local".
 }
 
 post {
@@ -16,7 +17,7 @@ post {
 
 body:json {
   {
-    "model": "test",
+    "model": "local",
     "messages": [{"role": "user", "content": "hello"}]
   }
 }
@@ -28,6 +29,10 @@ tests {
 
   test("id field is present", function() {
     expect(res.body).to.have.property("id");
+  });
+
+  test("backend field is 'local'", function() {
+    expect(res.body.backend).to.equal("local");
   });
 
   test("X-Request-ID response header is present", function() {

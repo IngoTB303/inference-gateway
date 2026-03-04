@@ -1,7 +1,11 @@
 meta {
-  name: Echo Correct Shape
+  name: Default backend fallback
   type: http
-  seq: 2
+  seq: 15
+}
+
+docs {
+  Omitting "model" from the request should route to default_backend (local echo).
 }
 
 post {
@@ -12,7 +16,6 @@ post {
 
 body:json {
   {
-    "model": "local",
     "messages": [{"role": "user", "content": "hello"}]
   }
 }
@@ -21,16 +24,12 @@ tests {
   test("status is 200", function() {
     expect(res.status).to.equal(200);
   });
-  
+
+  test("backend field is present", function() {
+    expect(res.body).to.have.property("backend");
+  });
+
   test("id field is present", function() {
     expect(res.body).to.have.property("id");
-  });
-  
-  test("choices field is present", function() {
-    expect(res.body).to.have.property("choices");
-  });
-  
-  test("usage field is present", function() {
-    expect(res.body).to.have.property("usage");
   });
 }

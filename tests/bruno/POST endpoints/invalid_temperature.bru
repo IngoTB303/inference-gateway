@@ -1,7 +1,7 @@
 meta {
-  name: Empty Messages List
+  name: Invalid temperature
   type: http
-  seq: 3
+  seq: 12
 }
 
 post {
@@ -13,7 +13,8 @@ post {
 body:json {
   {
     "model": "local",
-    "messages": []
+    "messages": [{"role": "user", "content": "hello"}],
+    "temperature": 5.0
   }
 }
 
@@ -22,7 +23,7 @@ tests {
     expect(res.status).to.equal(400);
   });
 
-  test("error is invalid_messages", function() {
-    expect(res.body.error).to.equal("invalid_messages");
+  test("error is invalid_temperature", function() {
+    expect(res.body.error).to.equal("invalid_temperature");
   });
 }

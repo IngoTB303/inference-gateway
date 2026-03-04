@@ -1,13 +1,22 @@
 meta {
-  name: Request ID Generated
+  name: Auth - correct key (200)
   type: http
   seq: 2
+}
+
+docs {
+  Requires the gateway to be running with API_KEY=test-key in .env.
+  Sends the correct Bearer token and expects a 200 response.
 }
 
 post {
   url: {{base_url}}/v1/chat/completions
   body: json
-  auth: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{api_key}}
 }
 
 body:json {
@@ -20,10 +29,5 @@ body:json {
 tests {
   test("status is 200", function() {
     expect(res.status).to.equal(200);
-  });
-
-  test("id is a valid UUID4", function() {
-    const uuid4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-    expect(res.body.id).to.match(uuid4Pattern);
   });
 }

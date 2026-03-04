@@ -1,0 +1,37 @@
+meta {
+  name: Backend field in response
+  type: http
+  seq: 14
+}
+
+docs {
+  Verifies the "backend" field is present in every response,
+  indicating which gateway backend handled the request.
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "model": "local",
+    "messages": [{"role": "user", "content": "hello"}]
+  }
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("backend field is present", function() {
+    expect(res.body).to.have.property("backend");
+  });
+
+  test("backend is 'local'", function() {
+    expect(res.body.backend).to.equal("local");
+  });
+}

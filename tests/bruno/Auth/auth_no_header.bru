@@ -1,0 +1,34 @@
+meta {
+  name: Auth - no header (401)
+  type: http
+  seq: 1
+}
+
+docs {
+  Requires the gateway to be running with API_KEY set in .env.
+  Without API_KEY configured, this request returns 200 instead.
+  Set API_KEY=test-key in .env and restart the gateway to run this test.
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "model": "local",
+    "messages": [{"role": "user", "content": "hello"}]
+  }
+}
+
+tests {
+  test("status is 401 when API_KEY is configured", function() {
+    expect(res.status).to.equal(401);
+  });
+
+  test("error is unauthorized", function() {
+    expect(res.body.error).to.equal("unauthorized");
+  });
+}
