@@ -1,0 +1,31 @@
+# Inference Gateway backend configuration
+#
+# Copy this file to config.yaml and edit to match your setup.
+#
+# Each backend entry needs at minimum: name, type
+# HTTP backends also need: url
+# Optional per-backend: timeout (seconds, default 60)
+#
+# Route requests by setting "model" in the request body to a backend name.
+# Requests with no "model" or an unrecognized name fall back to default_backend.
+
+backends:
+  - name: local
+    type: echo
+
+  - name: local-llama
+    type: http
+    url: http://localhost:8081
+    timeout: 60
+
+  - name: remote-modal-llama
+    type: http
+    url: https://your-modal-username--relay-llama-server-web.modal.run/
+    timeout: 60
+
+  - name: remote-modal-vllm
+    type: http
+    url: https://your-modal-username--relay-vllm-server-web.modal.run/
+    timeout: 120
+
+default_backend: local

@@ -208,3 +208,6 @@ __marimo__/
 
 # LlamaCPP server
 llama*
+
+# Local backend config (contains real URLs; use config.yaml.example as template)
+config.yaml
