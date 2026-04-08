@@ -1,0 +1,49 @@
+meta {
+  name: Prometheus metrics format
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{metrics_url}}/metrics
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("content-type is Prometheus text format", function() {
+    expect(res.headers["content-type"]).to.include("text/plain");
+  });
+
+  test("response contains HELP lines", function() {
+    expect(res.body).to.include("# HELP");
+  });
+
+  test("response contains TYPE lines", function() {
+    expect(res.body).to.include("# TYPE");
+  });
+
+  test("gateway_requests_total metric is present", function() {
+    expect(res.body).to.include("gateway_requests_total");
+  });
+
+  test("gateway_request_duration_seconds metric is present", function() {
+    expect(res.body).to.include("gateway_request_duration_seconds");
+  });
+
+  test("gateway_tokens_total metric is present", function() {
+    expect(res.body).to.include("gateway_tokens_total");
+  });
+
+  test("gateway_active_requests metric is present", function() {
+    expect(res.body).to.include("gateway_active_requests");
+  });
+
+  test("gateway_gpu_cost_usd_total metric is present", function() {
+    expect(res.body).to.include("gateway_gpu_cost_usd_total");
+  });
+}

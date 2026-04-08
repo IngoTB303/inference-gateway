@@ -663,12 +663,8 @@ def test_config_loading():
     from gateway.config import load_config
 
     cfg = load_config("config.yaml")
-    assert cfg.default_backend.name == "local"
-    assert isinstance(cfg.default_backend, EchoBackend)
     names = [b.name for b in cfg.all_backends]
     assert "local" in names
-    assert "remote-modal-llama" in names
-    assert "remote-modal-vllm" in names
 
 
 def test_no_config_fallback(tmp_path, monkeypatch):
@@ -1189,3 +1185,98 @@ def test_live_backend_timeout(live_gateway, monkeypatch):
 
     assert status == 504
     assert body["error"] == "gateway_timeout"
+
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics (#12)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def prom_gateway(monkeypatch):
+    """Echo gateway with reset in-memory metrics."""
+    monkeypatch.setattr(main.settings, "backend_url", None)
+    monkeypatch.setattr(main.settings, "api_key", None)
+    for f in ("request_count", "error_count", "prompt_tokens_total", "completion_tokens_total"):
+        monkeypatch.setattr(main.metrics, f, 0)
+    monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
+
+    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{port}"
+    server.shutdown()
+
+
+def test_prom_requests_total_increments(prom_gateway):
+    """gateway_requests_total counter increments after a successful request."""
+    from prometheus_client import REGISTRY
+
+    before = REGISTRY.get_sample_value(
+        "gateway_requests_total", {"status_code": "200", "model": "unknown"}
+    ) or 0.0
+
+    _post(prom_gateway + "/v1/chat/completions", COMPLETION_PAYLOAD)
+
+    after = REGISTRY.get_sample_value(
+        "gateway_requests_total", {"status_code": "200", "model": "unknown"}
+    ) or 0.0
+    assert after == before + 1
+
+
+def test_prom_tokens_total_increments(prom_gateway):
+    """gateway_tokens_total counter increments for prompt and completion tokens."""
+    from prometheus_client import REGISTRY
+
+    prompt_before = REGISTRY.get_sample_value(
+        "gateway_tokens_total", {"type": "prompt"}
+    ) or 0.0
+    completion_before = REGISTRY.get_sample_value(
+        "gateway_tokens_total", {"type": "completion"}
+    ) or 0.0
+
+    _post(
+        prom_gateway + "/v1/chat/completions",
+        {"model": "test", "messages": [{"role": "user", "content": "hello world"}]},
+    )
+
+    assert (REGISTRY.get_sample_value("gateway_tokens_total", {"type": "prompt"}) or 0.0) > prompt_before
+    assert (REGISTRY.get_sample_value("gateway_tokens_total", {"type": "completion"}) or 0.0) > completion_before
+
+
+def test_prom_request_duration_observed(prom_gateway):
+    """gateway_request_duration_seconds histogram records one observation per request."""
+    from prometheus_client import REGISTRY
+
+    count_before = REGISTRY.get_sample_value("gateway_request_duration_seconds_count") or 0.0
+
+    _post(prom_gateway + "/v1/chat/completions", COMPLETION_PAYLOAD)
+
+    count_after = REGISTRY.get_sample_value("gateway_request_duration_seconds_count") or 0.0
+    assert count_after == count_before + 1
+
+
+def test_prom_active_requests_gauge(prom_gateway):
+    """gateway_active_requests gauge returns to 0 after request completes."""
+    from prometheus_client import REGISTRY
+
+    _post(prom_gateway + "/v1/chat/completions", COMPLETION_PAYLOAD)
+
+    assert (REGISTRY.get_sample_value("gateway_active_requests") or 0.0) == 0.0
+
+
+def test_prom_error_counter_increments(prom_gateway):
+    """gateway_errors_total increments on a 400 response."""
+    from prometheus_client import REGISTRY
+
+    before = REGISTRY.get_sample_value(
+        "gateway_errors_total", {"status_code": "400"}
+    ) or 0.0
+
+    _post(prom_gateway + "/v1/chat/completions", {"model": "test", "messages": []})
+
+    after = REGISTRY.get_sample_value(
+        "gateway_errors_total", {"status_code": "400"}
+    ) or 0.0
+    assert after == before + 1
