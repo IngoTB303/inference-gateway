@@ -1,0 +1,28 @@
+meta {
+  name: Metrics - X-Technique chunked_prefill
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: inherit
+}
+
+headers {
+  X-Technique: chunked_prefill
+}
+
+body:json {
+  {
+    "model": "local",
+    "messages": [{"role": "user", "content": "hello"}]
+  }
+}
+
+tests {
+  test("request succeeds", function() {
+    expect(res.status).to.equal(200);
+  });
+}

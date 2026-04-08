@@ -44,6 +44,9 @@ class Settings:
     gpu_hourly_cost_usd: float = field(
         default_factory=lambda: float(os.environ.get("GPU_HOURLY_COST_USD", "1.10"))
     )
+    vllm_server_profile: str = field(
+        default_factory=lambda: os.environ.get("VLLM_SERVER_PROFILE", "default")
+    )
 
 
 settings = Settings()
@@ -303,6 +306,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def _do_handle_chat_completions(self) -> None:
         start = time.monotonic()
         request_id = self._get_request_id()
+        technique = self.headers.get("X-Technique", "baseline")
+        server_profile = settings.vllm_server_profile
         log = logging.LoggerAdapter(logger, {"request_id": request_id})
 
         # Parse body
@@ -310,21 +315,42 @@ class GatewayHandler(BaseHTTPRequestHandler):
             body = self._read_json_body()
         except (json.JSONDecodeError, ValueError) as exc:
             log.warning("Bad request body: %s", exc)
-            self._record_metrics(400, (time.monotonic() - start) * 1000, 0, 0)
+            self._record_metrics(
+                400,
+                (time.monotonic() - start) * 1000,
+                0,
+                0,
+                technique=technique,
+                server_profile=server_profile,
+            )
             self._send_json(400, {"error": "invalid_json"})
             return
 
         # Basic structure check
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
-            self._record_metrics(400, (time.monotonic() - start) * 1000, 0, 0)
+            self._record_metrics(
+                400,
+                (time.monotonic() - start) * 1000,
+                0,
+                0,
+                technique=technique,
+                server_profile=server_profile,
+            )
             self._send_json(400, {"error": "invalid_messages"})
             return
 
         # Full validation
         error = _validate_body(body)
         if error:
-            self._record_metrics(400, (time.monotonic() - start) * 1000, 0, 0)
+            self._record_metrics(
+                400,
+                (time.monotonic() - start) * 1000,
+                0,
+                0,
+                technique=technique,
+                server_profile=server_profile,
+            )
             self._send_json(400, {"error": error})
             return
 
@@ -352,12 +378,36 @@ class GatewayHandler(BaseHTTPRequestHandler):
         # Dispatch — config-based routing takes precedence over legacy settings
         if gateway_config is not None:
             self._handle_with_config(
-                request_id, forward_body, model, prompt, stream, start, log
+                request_id,
+                forward_body,
+                model,
+                prompt,
+                stream,
+                start,
+                log,
+                technique=technique,
+                server_profile=server_profile,
             )
         elif settings.backend_url:
-            self._handle_backend(request_id, forward_body, stream, start, log)
+            self._handle_backend(
+                request_id,
+                forward_body,
+                stream,
+                start,
+                log,
+                technique=technique,
+                server_profile=server_profile,
+            )
         else:
-            self._handle_echo(request_id, prompt, stream, start, log)
+            self._handle_echo(
+                request_id,
+                prompt,
+                stream,
+                start,
+                log,
+                technique=technique,
+                server_profile=server_profile,
+            )
 
     def _handle_echo(
         self,
@@ -366,6 +416,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
         stream: bool,
         start: float,
         log: logging.LoggerAdapter,
+        *,
+        technique: str = "baseline",
+        server_profile: str = "default",
     ) -> None:
         content = f"Echo: {prompt}"
         prompt_tokens = len(prompt.split())
@@ -385,7 +438,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
             )
             self._send_json(200, resp, request_id=request_id)
 
-        self._record_metrics(200, latency_ms, prompt_tokens, completion_tokens)
+        self._record_metrics(
+            200,
+            latency_ms,
+            prompt_tokens,
+            completion_tokens,
+            technique=technique,
+            server_profile=server_profile,
+        )
         log.info(
             "POST /v1/chat/completions status=200 latency_ms=%.1f mode=echo", latency_ms
         )
@@ -399,6 +459,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
         stream: bool,
         start: float,
         log: logging.LoggerAdapter,
+        *,
+        technique: str = "baseline",
+        server_profile: str = "default",
     ) -> None:
         """Route the request through the multi-backend config."""
         assert gateway_config is not None
@@ -417,24 +480,52 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if isinstance(backend, HttpBackend):
                 try:
                     self._proxy_stream(
-                        request_id, backend.completions_url, backend_body, start, log
+                        request_id,
+                        backend.completions_url,
+                        backend_body,
+                        start,
+                        log,
+                        technique=technique,
+                        server_profile=server_profile,
                     )
                 except httpx.TimeoutException:
                     latency_ms = (time.monotonic() - start) * 1000
-                    self._record_metrics(504, latency_ms, 0, 0)
+                    self._record_metrics(
+                        504,
+                        latency_ms,
+                        0,
+                        0,
+                        technique=technique,
+                        server_profile=server_profile,
+                    )
                     log.error("Backend timeout after %.1f ms", latency_ms)
                     self._send_json(
                         504, {"error": "gateway_timeout"}, request_id=request_id
                     )
                 except httpx.RequestError as exc:
                     latency_ms = (time.monotonic() - start) * 1000
-                    self._record_metrics(502, latency_ms, 0, 0)
+                    self._record_metrics(
+                        502,
+                        latency_ms,
+                        0,
+                        0,
+                        technique=technique,
+                        server_profile=server_profile,
+                    )
                     log.error("Backend connection error: %s", exc)
                     self._send_json(
                         502, {"error": "backend_unavailable"}, request_id=request_id
                     )
             else:
-                self._handle_echo(request_id, prompt, stream, start, log)
+                self._handle_echo(
+                    request_id,
+                    prompt,
+                    stream,
+                    start,
+                    log,
+                    technique=technique,
+                    server_profile=server_profile,
+                )
             return
 
         # Non-streaming: call backend.generate()
@@ -442,13 +533,27 @@ class GatewayHandler(BaseHTTPRequestHandler):
             data = backend.generate(backend_body, request_id)
         except httpx.TimeoutException:
             latency_ms = (time.monotonic() - start) * 1000
-            self._record_metrics(504, latency_ms, 0, 0)
+            self._record_metrics(
+                504,
+                latency_ms,
+                0,
+                0,
+                technique=technique,
+                server_profile=server_profile,
+            )
             log.error("Backend %s timeout after %.1f ms", backend.name, latency_ms)
             self._send_json(504, {"error": "gateway_timeout"}, request_id=request_id)
             return
         except httpx.RequestError as exc:
             latency_ms = (time.monotonic() - start) * 1000
-            self._record_metrics(502, latency_ms, 0, 0)
+            self._record_metrics(
+                502,
+                latency_ms,
+                0,
+                0,
+                technique=technique,
+                server_profile=server_profile,
+            )
             log.error("Backend %s connection error: %s", backend.name, exc)
             self._send_json(
                 502, {"error": "backend_unavailable"}, request_id=request_id
@@ -456,7 +561,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return
         except RuntimeError as exc:
             latency_ms = (time.monotonic() - start) * 1000
-            self._record_metrics(502, latency_ms, 0, 0)
+            self._record_metrics(
+                502,
+                latency_ms,
+                0,
+                0,
+                technique=technique,
+                server_profile=server_profile,
+            )
             log.error("Backend %s error: %s", backend.name, exc)
             self._send_json(502, {"error": "backend_error"}, request_id=request_id)
             return
@@ -469,7 +581,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
 
-        self._record_metrics(200, latency_ms, prompt_tokens, completion_tokens)
+        self._record_metrics(
+            200,
+            latency_ms,
+            prompt_tokens,
+            completion_tokens,
+            technique=technique,
+            server_profile=server_profile,
+        )
         log.info(
             "POST /v1/chat/completions status=200 latency_ms=%.1f mode=config backend=%s",
             latency_ms,
@@ -484,23 +603,56 @@ class GatewayHandler(BaseHTTPRequestHandler):
         stream: bool,
         start: float,
         log: logging.LoggerAdapter,
+        *,
+        technique: str = "baseline",
+        server_profile: str = "default",
     ) -> None:
         assert settings.backend_url is not None
         url = settings.backend_url.rstrip("/") + "/v1/chat/completions"
 
         try:
             if stream:
-                self._proxy_stream(request_id, url, body, start, log)
+                self._proxy_stream(
+                    request_id,
+                    url,
+                    body,
+                    start,
+                    log,
+                    technique=technique,
+                    server_profile=server_profile,
+                )
             else:
-                self._proxy_non_stream(request_id, url, body, start, log)
+                self._proxy_non_stream(
+                    request_id,
+                    url,
+                    body,
+                    start,
+                    log,
+                    technique=technique,
+                    server_profile=server_profile,
+                )
         except httpx.TimeoutException:
             latency_ms = (time.monotonic() - start) * 1000
-            self._record_metrics(504, latency_ms, 0, 0)
+            self._record_metrics(
+                504,
+                latency_ms,
+                0,
+                0,
+                technique=technique,
+                server_profile=server_profile,
+            )
             log.error("Backend timeout after %.1f ms", latency_ms)
             self._send_json(504, {"error": "gateway_timeout"}, request_id=request_id)
         except httpx.RequestError as exc:
             latency_ms = (time.monotonic() - start) * 1000
-            self._record_metrics(502, latency_ms, 0, 0)
+            self._record_metrics(
+                502,
+                latency_ms,
+                0,
+                0,
+                technique=technique,
+                server_profile=server_profile,
+            )
             log.error("Backend connection error: %s", exc)
             self._send_json(
                 502, {"error": "backend_unavailable"}, request_id=request_id
@@ -513,13 +665,23 @@ class GatewayHandler(BaseHTTPRequestHandler):
         body: dict[str, Any],
         start: float,
         log: logging.LoggerAdapter,
+        *,
+        technique: str = "baseline",
+        server_profile: str = "default",
     ) -> None:
         with httpx.Client(timeout=60.0) as client:
-            resp = client.post(url, json=body)
+            resp = client.post(url, json=body, headers={"X-Technique": technique})
 
         if resp.status_code >= 500:
             latency_ms = (time.monotonic() - start) * 1000
-            self._record_metrics(502, latency_ms, 0, 0)
+            self._record_metrics(
+                502,
+                latency_ms,
+                0,
+                0,
+                technique=technique,
+                server_profile=server_profile,
+            )
             log.error("Backend returned %d", resp.status_code)
             self._send_json(502, {"error": "backend_error"}, request_id=request_id)
             return
@@ -528,7 +690,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
             data = resp.json()
         except Exception:
             latency_ms = (time.monotonic() - start) * 1000
-            self._record_metrics(502, latency_ms, 0, 0)
+            self._record_metrics(
+                502,
+                latency_ms,
+                0,
+                0,
+                technique=technique,
+                server_profile=server_profile,
+            )
             self._send_json(
                 502, {"error": "backend_invalid_response"}, request_id=request_id
             )
@@ -542,7 +711,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
         completion_tokens = usage.get("completion_tokens", 0)
 
         self._record_metrics(
-            resp.status_code, latency_ms, prompt_tokens, completion_tokens
+            resp.status_code,
+            latency_ms,
+            prompt_tokens,
+            completion_tokens,
+            technique=technique,
+            server_profile=server_profile,
         )
         log.info(
             "POST /v1/chat/completions status=%d latency_ms=%.1f mode=backend",
@@ -558,13 +732,25 @@ class GatewayHandler(BaseHTTPRequestHandler):
         body: dict[str, Any],
         start: float,
         log: logging.LoggerAdapter,
+        *,
+        technique: str = "baseline",
+        server_profile: str = "default",
     ) -> None:
         """Forward SSE chunks from backend to client without buffering."""
         with httpx.Client(timeout=60.0) as client:
-            with client.stream("POST", url, json=body) as resp:
+            with client.stream(
+                "POST", url, json=body, headers={"X-Technique": technique}
+            ) as resp:
                 if resp.status_code >= 500:
                     latency_ms = (time.monotonic() - start) * 1000
-                    self._record_metrics(502, latency_ms, 0, 0)
+                    self._record_metrics(
+                        502,
+                        latency_ms,
+                        0,
+                        0,
+                        technique=technique,
+                        server_profile=server_profile,
+                    )
                     self._send_json(
                         502, {"error": "backend_error"}, request_id=request_id
                     )
@@ -601,7 +787,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
 
         latency_ms = (time.monotonic() - start) * 1000
-        self._record_metrics(200, latency_ms, prompt_tokens, completion_tokens)
+        self._record_metrics(
+            200,
+            latency_ms,
+            prompt_tokens,
+            completion_tokens,
+            technique=technique,
+            server_profile=server_profile,
+        )
         log.info(
             "POST /v1/chat/completions status=200 latency_ms=%.1f mode=backend-stream",
             latency_ms,
@@ -689,6 +882,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
         prompt_tokens: int,
         completion_tokens: int,
         model: str = "unknown",
+        technique: str = "baseline",
+        server_profile: str = "default",
     ) -> None:
         metrics.request_count += 1
         metrics.total_latency_ms += latency_ms
@@ -698,14 +893,29 @@ class GatewayHandler(BaseHTTPRequestHandler):
             metrics.error_count += 1
 
         latency_s = latency_ms / 1000.0
-        REQUESTS_TOTAL.labels(status_code=str(status), model=model).inc()
-        REQUEST_DURATION_SECONDS.observe(latency_s)
+        REQUESTS_TOTAL.labels(
+            status_code=str(status),
+            model=model,
+            technique=technique,
+            server_profile=server_profile,
+        ).inc()
+        REQUEST_DURATION_SECONDS.labels(
+            technique=technique,
+            server_profile=server_profile,
+        ).observe(latency_s)
         TOKENS_TOTAL.labels(type="prompt").inc(prompt_tokens)
         TOKENS_TOTAL.labels(type="completion").inc(completion_tokens)
         if status >= 400:
-            ERRORS_TOTAL.labels(status_code=str(status)).inc()
+            ERRORS_TOTAL.labels(
+                status_code=str(status),
+                technique=technique,
+                server_profile=server_profile,
+            ).inc()
         cost = latency_s * settings.gpu_hourly_cost_usd / 3600.0
-        GPU_COST_USD_TOTAL.inc(cost)
+        GPU_COST_USD_TOTAL.labels(
+            technique=technique,
+            server_profile=server_profile,
+        ).inc(cost)
 
 
 # ---------------------------------------------------------------------------

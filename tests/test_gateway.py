@@ -659,7 +659,6 @@ def test_get_backends_endpoint(multi_backend_gateway):
 
 def test_config_loading():
     """load_config() correctly parses config.yaml and creates backend objects."""
-    from gateway.backends.echo import EchoBackend
     from gateway.config import load_config
 
     cfg = load_config("config.yaml")
@@ -1197,7 +1196,12 @@ def prom_gateway(monkeypatch):
     """Echo gateway with reset in-memory metrics."""
     monkeypatch.setattr(main.settings, "backend_url", None)
     monkeypatch.setattr(main.settings, "api_key", None)
-    for f in ("request_count", "error_count", "prompt_tokens_total", "completion_tokens_total"):
+    for f in (
+        "request_count",
+        "error_count",
+        "prompt_tokens_total",
+        "completion_tokens_total",
+    ):
         monkeypatch.setattr(main.metrics, f, 0)
     monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
 
@@ -1213,15 +1217,17 @@ def test_prom_requests_total_increments(prom_gateway):
     """gateway_requests_total counter increments after a successful request."""
     from prometheus_client import REGISTRY
 
-    before = REGISTRY.get_sample_value(
-        "gateway_requests_total", {"status_code": "200", "model": "unknown"}
-    ) or 0.0
+    labels = {
+        "status_code": "200",
+        "model": "unknown",
+        "technique": "baseline",
+        "server_profile": "default",
+    }
+    before = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
 
     _post(prom_gateway + "/v1/chat/completions", COMPLETION_PAYLOAD)
 
-    after = REGISTRY.get_sample_value(
-        "gateway_requests_total", {"status_code": "200", "model": "unknown"}
-    ) or 0.0
+    after = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
     assert after == before + 1
 
 
@@ -1229,31 +1235,42 @@ def test_prom_tokens_total_increments(prom_gateway):
     """gateway_tokens_total counter increments for prompt and completion tokens."""
     from prometheus_client import REGISTRY
 
-    prompt_before = REGISTRY.get_sample_value(
-        "gateway_tokens_total", {"type": "prompt"}
-    ) or 0.0
-    completion_before = REGISTRY.get_sample_value(
-        "gateway_tokens_total", {"type": "completion"}
-    ) or 0.0
+    prompt_before = (
+        REGISTRY.get_sample_value("gateway_tokens_total", {"type": "prompt"}) or 0.0
+    )
+    completion_before = (
+        REGISTRY.get_sample_value("gateway_tokens_total", {"type": "completion"}) or 0.0
+    )
 
     _post(
         prom_gateway + "/v1/chat/completions",
         {"model": "test", "messages": [{"role": "user", "content": "hello world"}]},
     )
 
-    assert (REGISTRY.get_sample_value("gateway_tokens_total", {"type": "prompt"}) or 0.0) > prompt_before
-    assert (REGISTRY.get_sample_value("gateway_tokens_total", {"type": "completion"}) or 0.0) > completion_before
+    assert (
+        REGISTRY.get_sample_value("gateway_tokens_total", {"type": "prompt"}) or 0.0
+    ) > prompt_before
+    assert (
+        REGISTRY.get_sample_value("gateway_tokens_total", {"type": "completion"}) or 0.0
+    ) > completion_before
 
 
 def test_prom_request_duration_observed(prom_gateway):
     """gateway_request_duration_seconds histogram records one observation per request."""
     from prometheus_client import REGISTRY
 
-    count_before = REGISTRY.get_sample_value("gateway_request_duration_seconds_count") or 0.0
+    labels = {"technique": "baseline", "server_profile": "default"}
+    count_before = (
+        REGISTRY.get_sample_value("gateway_request_duration_seconds_count", labels)
+        or 0.0
+    )
 
     _post(prom_gateway + "/v1/chat/completions", COMPLETION_PAYLOAD)
 
-    count_after = REGISTRY.get_sample_value("gateway_request_duration_seconds_count") or 0.0
+    count_after = (
+        REGISTRY.get_sample_value("gateway_request_duration_seconds_count", labels)
+        or 0.0
+    )
     assert count_after == count_before + 1
 
 
@@ -1270,13 +1287,54 @@ def test_prom_error_counter_increments(prom_gateway):
     """gateway_errors_total increments on a 400 response."""
     from prometheus_client import REGISTRY
 
-    before = REGISTRY.get_sample_value(
-        "gateway_errors_total", {"status_code": "400"}
-    ) or 0.0
+    labels = {
+        "status_code": "400",
+        "technique": "baseline",
+        "server_profile": "default",
+    }
+    before = REGISTRY.get_sample_value("gateway_errors_total", labels) or 0.0
 
     _post(prom_gateway + "/v1/chat/completions", {"model": "test", "messages": []})
 
-    after = REGISTRY.get_sample_value(
-        "gateway_errors_total", {"status_code": "400"}
-    ) or 0.0
+    after = REGISTRY.get_sample_value("gateway_errors_total", labels) or 0.0
+    assert after == before + 1
+
+
+def test_prom_x_technique_header_sets_label(prom_gateway):
+    """X-Technique header value appears as the technique label in metrics."""
+    from prometheus_client import REGISTRY
+
+    labels = {
+        "status_code": "200",
+        "model": "unknown",
+        "technique": "chunked_prefill",
+        "server_profile": "default",
+    }
+    before = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
+
+    _post(
+        prom_gateway + "/v1/chat/completions",
+        COMPLETION_PAYLOAD,
+        headers={"X-Technique": "chunked_prefill"},
+    )
+
+    after = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
+    assert after == before + 1
+
+
+def test_prom_missing_x_technique_defaults_to_baseline(prom_gateway):
+    """Requests without X-Technique header use technique=baseline."""
+    from prometheus_client import REGISTRY
+
+    labels = {
+        "status_code": "200",
+        "model": "unknown",
+        "technique": "baseline",
+        "server_profile": "default",
+    }
+    before = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
+
+    _post(prom_gateway + "/v1/chat/completions", COMPLETION_PAYLOAD)
+
+    after = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
     assert after == before + 1
