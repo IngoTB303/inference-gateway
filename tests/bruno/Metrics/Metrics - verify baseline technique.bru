@@ -1,0 +1,21 @@
+meta {
+  name: Metrics - verify baseline technique
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{metrics_url}}/metrics
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("baseline technique label appears in metrics", function() {
+    expect(res.body).to.include('technique="baseline"');
+  });
+}

@@ -46,4 +46,12 @@ tests {
   test("gateway_gpu_cost_usd_total metric is present", function() {
     expect(res.body).to.include("gateway_gpu_cost_usd_total");
   });
+
+  test("technique label is present in metrics output", function() {
+    expect(res.body).to.include('technique="');
+  });
+
+  test("server_profile label is present in metrics output", function() {
+    expect(res.body).to.include('server_profile="');
+  });
 }

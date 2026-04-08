@@ -1,0 +1,28 @@
+meta {
+  name: Metrics - X-Technique baseline
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: inherit
+}
+
+headers {
+  X-Technique: baseline
+}
+
+body:json {
+  {
+    "model": "local",
+    "messages": [{"role": "user", "content": "hello"}]
+  }
+}
+
+tests {
+  test("request succeeds", function() {
+    expect(res.status).to.equal(200);
+  });
+}
