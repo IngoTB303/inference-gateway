@@ -1,4 +1,4 @@
-"""Modal app — vLLM serving google/gemma-4-e2b-it, optimized flags (two warm containers).
+"""Modal app — vLLM serving google/gemma-4-e2b-it, optimized flags (one warm container).
 
 Deploy:  modal deploy modal/vllm_gemma4_optimized.py
          bash scripts/deploy_modal_vllm.sh optimized
@@ -66,7 +66,7 @@ vllm_cache_vol = modal.Volume.from_name("gemma4-vllm-cache", create_if_missing=T
 app = modal.App("vllm-gemma4-optimized")
 
 # ---------------------------------------------------------------------------
-# vLLM server — two warm containers so the load balancer always has capacity
+# vLLM server — one warm container (min_containers=max_containers=1)
 # ---------------------------------------------------------------------------
 @app.function(
     image=vllm_image,
@@ -93,7 +93,7 @@ def serve() -> None:
         "--dtype", "bfloat16",
         "--max-model-len", str(MAX_MODEL_LEN),
         "--gpu-memory-utilization", str(GPU_MEMORY_UTILIZATION),
-        "--limit-mm-per-prompt", f"'{json.dumps({'image': 0, 'video': 0, 'audio': 0})}'",
+        "--limit-mm-per-prompt", json.dumps({'image': 0, 'video': 0, 'audio': 0}),
         "--async-scheduling",
         # --- Throughput optimizations ---
         "--enable-chunked-prefill",
@@ -102,7 +102,7 @@ def serve() -> None:
         "--max-num-seqs", "64",
     ]
     print("Starting vLLM (optimized):", " ".join(cmd), flush=True)
-    subprocess.Popen(" ".join(cmd), shell=True)
+    subprocess.Popen(cmd)
 
 
 @app.local_entrypoint()

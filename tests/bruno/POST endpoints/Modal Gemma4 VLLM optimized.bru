@@ -23,8 +23,8 @@ tests {
     expect(res.status).to.equal(200);
   });
   
-  test("backend field is 'remote-modal-vllm'", function() {
-    expect(res.body.backend).to.equal("remote-modal-vllm");
+  test("backend field is 'modal-gemma4-optimized'", function() {
+    expect(res.body.backend).to.equal("modal-gemma4-optimized");
   });
   
   test("choices has at least one entry", function() {

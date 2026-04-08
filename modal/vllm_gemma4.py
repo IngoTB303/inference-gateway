@@ -1,4 +1,4 @@
-"""Modal app — vLLM serving google/gemma-4-e2b-it, standard flags (two warm containers).
+"""Modal app — vLLM serving google/gemma-4-e2b-it, standard flags (one warm container).
 
 Deploy:  modal deploy modal/vllm_gemma4.py
          bash scripts/deploy_modal_vllm.sh standard
@@ -50,7 +50,7 @@ vllm_cache_vol = modal.Volume.from_name("gemma4-vllm-cache", create_if_missing=T
 app = modal.App("vllm-gemma4-standard")
 
 # ---------------------------------------------------------------------------
-# vLLM server — two warm containers so the load balancer always has capacity
+# vLLM server — one warm container (min_containers=max_containers=1)
 # ---------------------------------------------------------------------------
 @app.function(
     image=vllm_image,
@@ -77,12 +77,12 @@ def serve() -> None:
         "--dtype", "bfloat16",
         "--max-model-len", str(MAX_MODEL_LEN),
         "--gpu-memory-utilization", str(GPU_MEMORY_UTILIZATION),
-        "--limit-mm-per-prompt", f"'{json.dumps({'image': 0, 'video': 0, 'audio': 0})}'",
+        "--limit-mm-per-prompt", json.dumps({'image': 0, 'video': 0, 'audio': 0}),
         "--async-scheduling",
         # Standard profile: no chunked prefill, no prefix caching
     ]
     print("Starting vLLM (standard):", " ".join(cmd), flush=True)
-    subprocess.Popen(" ".join(cmd), shell=True)
+    subprocess.Popen(cmd)
 
 
 @app.local_entrypoint()
