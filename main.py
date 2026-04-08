@@ -38,6 +38,12 @@ class Settings:
     api_key: str | None = field(
         default_factory=lambda: os.environ.get("API_KEY") or None
     )
+    metrics_port: int = field(
+        default_factory=lambda: int(os.environ.get("GATEWAY_METRICS_PORT", "9101"))
+    )
+    gpu_hourly_cost_usd: float = field(
+        default_factory=lambda: float(os.environ.get("GPU_HOURLY_COST_USD", "1.10"))
+    )
 
 
 settings = Settings()
@@ -49,6 +55,16 @@ settings = Settings()
 
 from gateway.config import GatewayConfig, load_config  # noqa: E402
 from gateway.backends.http_backend import HttpBackend  # noqa: E402
+from gateway.prom_metrics import (  # noqa: E402
+    ACTIVE_REQUESTS,
+    ERRORS_TOTAL,
+    GPU_COST_USD_TOTAL,
+    INTER_CHUNK_SECONDS,
+    REQUEST_DURATION_SECONDS,
+    REQUESTS_TOTAL,
+    TOKENS_TOTAL,
+    TTFT_SECONDS,
+)
 
 # Load config.yaml if present; otherwise gateway_config stays None and the
 # handler falls back to the legacy settings.backend_url path.
@@ -278,6 +294,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
 
     def _handle_chat_completions(self) -> None:
+        ACTIVE_REQUESTS.inc()
+        try:
+            self._do_handle_chat_completions()
+        finally:
+            ACTIVE_REQUESTS.dec()
+
+    def _do_handle_chat_completions(self) -> None:
         start = time.monotonic()
         request_id = self._get_request_id()
         log = logging.LoggerAdapter(logger, {"request_id": request_id})
@@ -555,9 +578,18 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
                 prompt_tokens = 0
                 completion_tokens = 0
+                first_chunk = True
+                last_chunk_time = time.monotonic()
                 for line in resp.iter_lines():
                     self.wfile.write((line + "\n").encode())
                     if line.startswith("data: ") and line != "data: [DONE]":
+                        now = time.monotonic()
+                        if first_chunk:
+                            TTFT_SECONDS.observe(now - start)
+                            first_chunk = False
+                        else:
+                            INTER_CHUNK_SECONDS.observe(now - last_chunk_time)
+                        last_chunk_time = now
                         try:
                             chunk = json.loads(line[6:])
                             if usage := chunk.get("usage"):
@@ -656,6 +688,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         latency_ms: float,
         prompt_tokens: int,
         completion_tokens: int,
+        model: str = "unknown",
     ) -> None:
         metrics.request_count += 1
         metrics.total_latency_ms += latency_ms
@@ -664,6 +697,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if status >= 400:
             metrics.error_count += 1
 
+        latency_s = latency_ms / 1000.0
+        REQUESTS_TOTAL.labels(status_code=str(status), model=model).inc()
+        REQUEST_DURATION_SECONDS.observe(latency_s)
+        TOKENS_TOTAL.labels(type="prompt").inc(prompt_tokens)
+        TOKENS_TOTAL.labels(type="completion").inc(completion_tokens)
+        if status >= 400:
+            ERRORS_TOTAL.labels(status_code=str(status)).inc()
+        cost = latency_s * settings.gpu_hourly_cost_usd / 3600.0
+        GPU_COST_USD_TOTAL.inc(cost)
+
 
 # ---------------------------------------------------------------------------
 # Entry point
@@ -671,6 +714,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    import prometheus_client
+
+    prometheus_client.start_http_server(settings.metrics_port)
+    logger.info(
+        "Prometheus metrics available on port %d",
+        settings.metrics_port,
+        extra={"request_id": "-"},
+    )
+
     server = HTTPServer(("0.0.0.0", settings.port), GatewayHandler)
     mode = f"backend={settings.backend_url}" if settings.backend_url else "echo mode"
     logger.info(
