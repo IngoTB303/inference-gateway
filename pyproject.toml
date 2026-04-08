@@ -26,3 +26,6 @@ dev = [
     "respx>=0.21",
     "ruff>=0.15.3",
 ]
+deploy = [
+    "modal>=0.73",
+]
