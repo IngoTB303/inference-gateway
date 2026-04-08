@@ -1,5 +1,7 @@
 {
-  "annotations": {"list": []},
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -7,17 +9,41 @@
   "links": [],
   "panels": [
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 0},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
-      "options": {"content": "## vLLM overview (engine-native metrics)\n\n**vLLM 0.13+** exposes OpenMetrics-style names with a **`vllm:`** prefix (e.g. `vllm:request_prefill_time_seconds_bucket`), scraped from **`:8000/metrics`**. Older builds used **`vllm_`** underscores — adjust in **Explore** if needed.\n\n**Decode panel** uses **`vllm:inter_token_latency_seconds`** (per autoregressive step); there is no separate `request_decode` histogram in current vLLM exports.\n\n**Speculative decode panel (below):** shows **`vllm:spec_decode_*`** from the **vLLM process only**. It is **not** tied to Crew/gateway **`--technique speculative_decoding`** or **`combined`** — those names are just **`X-Technique`** labels on gateway logs and `llm_gateway_*`. If this panel is empty, vLLM was almost certainly **not** launched with speculative decoding enabled (no draft model / spec flags), so the engine never exports these series. Confirm with `curl -sS :8000/metrics | grep -i spec_decode` on the tunnel.\n\n**Gateway** metrics (`llm_gateway_*`): dashboard **Gateway — proxy timings + cost** (per-technique request rates, latency, cost).\n\n**Jaeger:** **`X-Trace-Id`**.", "mode": "markdown"},
+      "options": {
+        "content": "## vLLM overview (engine-native metrics)\n\n**vLLM 0.13+** exposes OpenMetrics-style names with a **`vllm:`** prefix (e.g. `vllm:request_prefill_time_seconds_bucket`), scraped from **`Modal /metrics (HTTPS)`**. Older builds used **`vllm_`** underscores \u2014 adjust in **Explore** if needed.\n\n**Decode panel** uses **`vllm:inter_token_latency_seconds`** (per autoregressive step); there is no separate `request_decode` histogram in current vLLM exports.\n\n**Speculative decode panel (below):** shows **`vllm:spec_decode_*`** from the **vLLM process only**. It is **not** tied to Crew/gateway **`--technique speculative_decoding`** or **`combined`** \u2014 those names are just **`X-Technique`** labels on gateway logs and `gateway_*`. If this panel is empty, vLLM was almost certainly **not** launched with speculative decoding enabled (no draft model / spec flags), so the engine never exports these series. Confirm with `curl -sS Modal /metrics (HTTPS) | grep -i spec_decode` on the tunnel.\n\n**Gateway** metrics (`gateway_*`): dashboard **Gateway \u2014 proxy timings + cost** (per-technique request rates, latency, cost).\n\n**Jaeger:** **`X-Trace-Id`**.",
+        "mode": "markdown"
+      },
       "title": "Notes",
       "type": "text"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 7},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
       "id": 2,
       "targets": [
         {
@@ -35,9 +61,22 @@
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 7},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
       "id": 3,
       "targets": [
         {
@@ -55,9 +94,22 @@
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 15
+      },
       "id": 4,
       "targets": [
         {
@@ -70,9 +122,22 @@
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "tps"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "tps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 15
+      },
       "id": 5,
       "targets": [
         {
@@ -85,9 +150,22 @@
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
       "id": 6,
       "targets": [
         {
@@ -100,14 +178,32 @@
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "Engine metrics from vLLM :8000/metrics — not from gateway X-Technique. Empty if vLLM was not started with speculative decoding (draft/spec flags). Crew labels like speculative_decoding or combined only tag llm_gateway_* / JSONL; they do not turn this on.",
-      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Engine metrics from vLLM :8000/metrics \u2014 not from gateway X-Technique. Empty if vLLM was not started with speculative decoding (draft/spec flags). Crew labels like speculative_decoding or combined only tag gateway_* / JSONL; they do not turn this on.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
       "id": 7,
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "editorMode": "code",
           "expr": "vllm:spec_decode_draft_acceptance_rate",
           "legendFormat": "draft_acceptance_rate (gauge, vllm:)",
@@ -115,7 +211,10 @@
           "refId": "A"
         },
         {
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(vllm:spec_decode_num_accepted_tokens_total[5m])) / sum(rate(vllm:spec_decode_num_draft_tokens_total[5m]))",
           "legendFormat": "accepted/draft (counters, vllm:)",
@@ -123,7 +222,10 @@
           "refId": "B"
         },
         {
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "editorMode": "code",
           "expr": "vllm_spec_decode_draft_acceptance_rate",
           "legendFormat": "draft_acceptance_rate (legacy vllm_)",
@@ -131,7 +233,10 @@
           "refId": "C"
         },
         {
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(vllm_spec_decode_num_accepted_tokens_total[5m])) / sum(rate(vllm_spec_decode_num_draft_tokens_total[5m]))",
           "legendFormat": "accepted/draft (legacy vllm_)",
@@ -145,11 +250,19 @@
   ],
   "refresh": "10s",
   "schemaVersion": 39,
-  "tags": ["vllm", "texttinyllama"],
-  "templating": {"list": []},
-  "time": {"from": "now-1h", "to": "now"},
+  "tags": [
+    "vllm",
+    "texttinyllama"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "timezone": "browser",
-  "title": "vLLM — prefill vs decode",
+  "title": "vLLM \u2014 prefill vs decode",
   "uid": "tt-vllm-overview",
   "version": 7
 }
