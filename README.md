@@ -38,6 +38,9 @@ The server listens on `http://localhost:8080` by default.
 |---|---|---|
 | `PORT` | `8080` | Port the HTTP server listens on |
 | `API_KEY` | *(unset)* | If set, all POST requests must include `Authorization: Bearer <key>` or `Authorization: Api-Key <key>`. Leave empty to disable auth. |
+| `GATEWAY_METRICS_PORT` | `9101` | Port for the Prometheus metrics scrape endpoint |
+| `GPU_HOURLY_COST_USD` | `1.10` | Hourly GPU cost used to estimate `gateway_gpu_cost_usd_total` (A10 default) |
+| `VLLM_SERVER_PROFILE` | `default` | Server profile label attached to all Prometheus metrics (e.g. `chunked_prefill`, `baseline`) |
 
 ### Backend configuration (`config.yaml`)
 
@@ -45,23 +48,20 @@ Backends are configured in `config.yaml`. The gateway routes requests by matchin
 
 ```yaml
 backends:
-  - name: local          # echo mode — no real backend needed
+  - name: local                  # echo mode — no real backend needed
     type: echo
 
-  - name: local-llama    # local llama.cpp server
+  - name: modal-gemma4-standard  # vLLM Gemma4 standard on Modal
     type: http
-    url: http://localhost:8081
-    timeout: 60
-
-  - name: remote-modal-llama   # llama.cpp hosted on Modal
-    type: http
-    url: https://ingo-villnow--relay-llama-server-web.modal.run/
-    timeout: 60
-
-  - name: remote-modal-vllm   # vLLM hosted on Modal
-    type: http
-    url: https://ingo-villnow--relay-vllm-server-web.modal.run/
+    url: https://ingo-villnow--vllm-gemma4-standard-serve.modal.run/
     timeout: 120
+    model: gemma-4-e2b-it        # vLLM requires this field
+
+  - name: modal-gemma4-optimized # vLLM Gemma4 optimized on Modal
+    type: http
+    url: https://ingo-villnow--vllm-gemma4-optimized-serve.modal.run/
+    timeout: 120
+    model: gemma-4-e2b-it
 
 default_backend: local
 ```
@@ -79,7 +79,8 @@ default_backend: local
 | `POST` | `/v1/chat/completions` | Main inference endpoint |
 | `GET` | `/v1/backends` | List configured backends and default |
 | `GET` | `/healthz` | Health check |
-| `GET` | `/metrics` | Request/latency/token counters |
+| `GET` | `/metrics` | Legacy JSON counters (request count, latency, tokens) |
+| `GET` | `:9101/metrics` | Prometheus-format metrics (dedicated scrape port) |
 
 ### Request body (`POST /v1/chat/completions`)
 
@@ -121,20 +122,20 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 
 Response includes `"backend": "local"` and content `"Echo: hello"`.
 
-### Route to remote llama.cpp on Modal
+### Route to Modal vLLM (standard)
 
 ```bash
 curl -X POST http://localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model": "remote-modal-llama", "messages": [{"role": "user", "content": "say hi"}], "max_tokens": 50}'
+  -d '{"model": "modal-gemma4-standard", "messages": [{"role": "user", "content": "say hi"}], "max_tokens": 50}'
 ```
 
-### Route to remote vLLM on Modal
+### Route to Modal vLLM (optimized)
 
 ```bash
 curl -X POST http://localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model": "remote-modal-vllm", "messages": [{"role": "user", "content": "say hi"}], "max_tokens": 50}'
+  -d '{"model": "modal-gemma4-optimized", "messages": [{"role": "user", "content": "say hi"}], "max_tokens": 50}'
 ```
 
 ### Omit model — falls back to default backend
@@ -179,8 +180,23 @@ curl http://localhost:8080/healthz
 ### Metrics
 
 ```bash
+# Legacy JSON counters
 curl http://localhost:8080/metrics
-# → {"request_count": N, "error_count": N, "total_latency_ms": N, ...}
+# → {"request_count": N, "error_count": N, "avg_latency_ms": N, ...}
+
+# Prometheus scrape endpoint (separate port)
+curl http://localhost:9101/metrics
+# → # HELP gateway_requests_total ...
+#   gateway_requests_total{status_code="200",model="local",technique="baseline",...} 5.0
+```
+
+Pass `X-Technique` on requests to segment metrics by inference technique (e.g. `chunked_prefill`, `prefix_caching`). Missing header defaults to `baseline`.
+
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'X-Technique: chunked_prefill' \
+  -d '{"model": "local", "messages": [{"role": "user", "content": "hello"}]}'
 ```
 
 ---
@@ -196,7 +212,7 @@ uv run pytest tests/test_gateway.py::test_routing_by_model_echo   # single test
 
 The suite starts real `HTTPServer` instances on free ports and uses [respx](https://lundberg.github.io/respx/) to mock backend `httpx` calls. No running backend is required.
 
-**51 tests** covering: GET endpoints, echo shape, request-ID, validation errors (400), auth (401), SSE streaming, backend proxy, response normalization, multi-backend routing, metrics, `latency_ms` in usage.
+**60 tests** covering: GET endpoints, echo shape, request-ID, validation errors (400), auth (401), SSE streaming, backend proxy, response normalization, multi-backend routing, metrics, `latency_ms` in usage, Prometheus counter/histogram/gauge behaviour, `X-Technique` label propagation.
 
 ### Live backend tests
 
@@ -214,7 +230,38 @@ Live tests skip gracefully (rather than fail) when a backend returns 502/504.
 
 ### Bruno collection
 
-Open `tests/bruno/` in [Bruno](https://www.usebruno.com/) and select the **local** environment (`base_url = http://localhost:8080`).
+Open `tests/bruno/` in [Bruno](https://www.usebruno.com/) and select the **local** environment (`base_url = http://localhost:8080`, `metrics_url = http://localhost:9101`).
+
+---
+
+## Monitoring Stack (Prometheus + Grafana)
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
+
+```bash
+# 1. Start the gateway first
+uv run python main.py
+
+# 2. Launch Prometheus + Grafana
+cd monitoring
+docker compose up -d
+```
+
+| Service | URL | Credentials |
+|---|---|---|
+| Prometheus | http://localhost:9090 | — |
+| Grafana | http://localhost:3000 | admin / admin |
+
+Prometheus scrapes:
+- Gateway metrics on `:9101` (`job_name: gateway`)
+- Modal vLLM standard deployment over HTTPS (`job_name: vllm_standard`)
+- Modal vLLM optimized deployment over HTTPS (`job_name: vllm_optimized`)
+
+Set `VLLM_SERVER_PROFILE=default` or `VLLM_SERVER_PROFILE=optimized` in `.env` to label gateway metrics with the active deployment.
+
+Check targets are **UP**: http://localhost:9090/targets
+
+Grafana loads with a pre-provisioned Prometheus datasource and four dashboards: **gateway-proxy**, **overview**, **technique-cost**, **tinyllama-ops**.
 
 ---
 

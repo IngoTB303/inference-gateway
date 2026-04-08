@@ -1,0 +1,241 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "## Gateway proxy metrics (laptop)\n\nThese come from **`python gateway.py`** on **`:9101/metrics`**. They measure **HTTP proxy + tunnel** behavior, not raw vLLM internals. **TTFT** = first upstream byte (streaming) or full response time (non-stream). **TPOT** = mean inter-chunk delay (streaming) or `e2e / completion_tokens` (non-stream). Compare with the **vLLM \u2014 prefill vs decode** dashboard for engine-native histograms (`vllm_*` names vary by vLLM version).\n\n**Streaming inter-chunk** panels stay **empty** until at least one **`Accept: text/event-stream`** completion runs through the gateway (Crew/litellm default is non-streaming).\n\n**Labels:** `technique` = `X-Technique` header or `crew.py --technique`. `server_profile` = `VLLM_SERVER_PROFILE` in `.env` (which server config you believe is live). For fair A/B tests, change **vLLM flags** on the GPU, set **`VLLM_SERVER_PROFILE`** to match, restart the gateway, then run Crew.",
+        "mode": "markdown"
+      },
+      "title": "How to read this board",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 5
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (technique, server_profile) (rate(gateway_requests_total[5m]))",
+          "legendFormat": "{{technique}} / {{server_profile}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Request rate (completed proxy calls)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, technique, server_profile) (rate(gateway_ttft_seconds_bucket[5m])))",
+          "legendFormat": "p95 TTFT {{technique}}/{{server_profile}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, technique, server_profile) (rate(gateway_ttft_seconds_bucket[5m])))",
+          "legendFormat": "p50 TTFT {{technique}}/{{server_profile}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Time to first token (gateway proxy)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, technique, server_profile) (rate(gateway_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 E2E {{technique}}/{{server_profile}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, technique, server_profile) (rate(gateway_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 E2E {{technique}}/{{server_profile}}",
+          "refId": "B"
+        }
+      ],
+      "title": "End-to-end request duration (gateway)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Histogram exists only after streaming requests. Non-streaming Crew/curl traffic leaves this empty. Second series shows observation rate (still 0 until streaming).",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No streaming yet",
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "observations/s (all techniques)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "id": 7,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, technique, server_profile) (rate(gateway_inter_chunk_seconds_bucket[5m])))",
+          "legendFormat": "p95 inter-chunk {{technique}}/{{server_profile}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(gateway_inter_chunk_seconds_count[5m]))",
+          "legendFormat": "observations/s (all techniques)",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Streaming inter-chunk delay (SSE only)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 25
+      },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "sum by (technique, server_profile) (rate(gateway_gpu_cost_usd_total[5m]))",
+          "legendFormat": "$/s {{technique}}/{{server_profile}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Estimated GPU spend rate (gateway cost model)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": [
+    "gateway",
+    "ttft",
+    "tpot"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Gateway \u2014 proxy timings + cost",
+  "uid": "tt-gateway-proxy",
+  "version": 5
+}
