@@ -132,9 +132,9 @@ if $DEPLOY; then
 fi
 
 # ---------------------------------------------------------------------------
-# Results accumulator
+# Results accumulator (one pre-formatted line per profile)
 # ---------------------------------------------------------------------------
-declare -a RESULT_LINES=()
+RESULT_LINES=""
 
 # ---------------------------------------------------------------------------
 # Main experiment loop
@@ -169,7 +169,7 @@ for profile in "${PROFILES[@]}"; do
   for run in $(seq 1 "$N_RUNS"); do
     echo ""
     echo "  ── Run $run / $N_RUNS ──"
-    start_ms=$(date +%s%3N)
+    start_ms=$(date +%s)
 
     if MODEL_NAME="$backend" \
        CREW_VLLM_WAIT_S=0 \
@@ -182,10 +182,10 @@ for profile in "${PROFILES[@]}"; do
       echo "  ⚠️  Run $run failed (exit $?)."
     fi
 
-    end_ms=$(date +%s%3N)
+    end_ms=$(date +%s)
     elapsed=$(( end_ms - start_ms ))
     total_ms=$(( total_ms + elapsed ))
-    echo "  ⏱  Run $run wall-clock: ${elapsed}ms"
+    echo "  ⏱  Run $run wall-clock: ${elapsed}s"
   done
 
   if [[ $N_RUNS -gt 0 ]]; then
@@ -195,8 +195,8 @@ for profile in "${PROFILES[@]}"; do
   fi
 
   echo ""
-  echo "  Profile '$profile': $ok/$N_RUNS succeeded, avg wall-clock ${avg_ms}ms"
-  RESULT_LINES+=("  %-12s %-15s %d/%d    %dms" "$profile" "$technique" "$ok" "$N_RUNS" "$avg_ms")
+  echo "  Profile '$profile': $ok/$N_RUNS succeeded, avg wall-clock ${avg_ms}s"
+  RESULT_LINES="${RESULT_LINES}$(printf "  %-12s %-15s %d/%d       %ds\n" "$profile" "$technique" "$ok" "$N_RUNS" "$avg_ms")"
 done
 
 # ---------------------------------------------------------------------------
@@ -206,12 +206,9 @@ echo ""
 echo "═══════════════════════════════════════════════════════"
 echo " Experiment Summary"
 echo "═══════════════════════════════════════════════════════"
-printf "  %-12s %-15s %-8s %s\n" "Profile" "Technique" "Success" "Avg wall-clock"
-printf "  %-12s %-15s %-8s %s\n" "-------" "---------" "-------" "--------------"
-for line in "${RESULT_LINES[@]}"; do
-  # shellcheck disable=SC2059
-  printf "$line\n"
-done
+printf "  %-12s %-15s %-8s %s\n" "Profile" "Technique" "Success" "Avg (s)"
+printf "  %-12s %-15s %-8s %s\n" "-------" "---------" "-------" "-------"
+printf "%s" "$RESULT_LINES"
 echo ""
 echo "Metrics per technique: curl http://localhost:9101/metrics | grep gateway_requests_total"
 echo "Grafana dashboard:     http://localhost:3000"

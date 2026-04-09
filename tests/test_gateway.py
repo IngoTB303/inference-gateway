@@ -34,7 +34,11 @@ def _post(client, path, body: dict, headers: dict | None = None, timeout: float 
         # live test: client is the full URL, path is the body
         with httpx.Client(timeout=timeout) as c:
             try:
-                resp = c.post(client, json=path, headers={"Content-Type": "application/json", **(headers or {})})
+                resp = c.post(
+                    client,
+                    json=path,
+                    headers={"Content-Type": "application/json", **(headers or {})},
+                )
                 return resp.status_code, resp.json(), resp.headers
             except httpx.HTTPStatusError as e:
                 return e.response.status_code, e.response.json(), e.response.headers
@@ -183,7 +187,8 @@ def test_echo_usage_fields(gateway):
 def test_request_id_from_header(gateway):
     rid = "my-request-123"
     status, body, headers = _post(
-        gateway, "/v1/chat/completions",
+        gateway,
+        "/v1/chat/completions",
         COMPLETION_PAYLOAD,
         headers={"X-Request-ID": rid},
     )
@@ -202,7 +207,8 @@ def test_request_id_generated(gateway):
 def test_request_id_alt_header(gateway):
     rid = "alt-request-456"
     status, body, _ = _post(
-        gateway, "/v1/chat/completions",
+        gateway,
+        "/v1/chat/completions",
         COMPLETION_PAYLOAD,
         headers={"Request-Id": rid},
     )
@@ -233,7 +239,8 @@ def test_missing_messages(gateway):
 
 def test_empty_messages_list(gateway):
     status, body, _ = _post(
-        gateway, "/v1/chat/completions",
+        gateway,
+        "/v1/chat/completions",
         {"model": "test", "messages": []},
     )
     assert status == 400
@@ -276,8 +283,7 @@ def test_backend_success(backend_gateway):
     )
 
     status, body, headers = _post(
-        backend_gateway, "/v1/chat/completions",
-        COMPLETION_PAYLOAD
+        backend_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD
     )
     assert status == 200
     assert "id" in body
@@ -290,10 +296,7 @@ def test_backend_5xx(backend_gateway):
         return_value=httpx.Response(500, json={"error": "internal"})
     )
 
-    status, body, _ = _post(
-        backend_gateway, "/v1/chat/completions",
-        COMPLETION_PAYLOAD
-    )
+    status, body, _ = _post(backend_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     assert status == 502
     assert body["error"] == "backend_error"
 
@@ -304,10 +307,7 @@ def test_backend_timeout(backend_gateway):
         side_effect=httpx.TimeoutException("timed out")
     )
 
-    status, body, _ = _post(
-        backend_gateway, "/v1/chat/completions",
-        COMPLETION_PAYLOAD
-    )
+    status, body, _ = _post(backend_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     assert status == 504
     assert body["error"] == "gateway_timeout"
 
@@ -318,10 +318,7 @@ def test_backend_connection_error(backend_gateway):
         side_effect=httpx.ConnectError("refused")
     )
 
-    status, body, _ = _post(
-        backend_gateway, "/v1/chat/completions",
-        COMPLETION_PAYLOAD
-    )
+    status, body, _ = _post(backend_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     assert status == 502
     assert body["error"] == "backend_unavailable"
 
@@ -340,9 +337,7 @@ def test_metrics_increments(gateway):
 
 
 def test_metrics_error_count(gateway):
-    _post(
-        gateway, "/v1/chat/completions",
-        {})  # missing messages → 400
+    _post(gateway, "/v1/chat/completions", {})  # missing messages → 400
 
     _, metrics_body = _get(gateway, "/metrics")
     assert metrics_body["error_count"] == 1
@@ -367,7 +362,8 @@ def test_metrics_prompt_tokens_echo(gateway):
 
 def test_invalid_message_missing_role(gateway):
     status, body, _ = _post(
-        gateway, "/v1/chat/completions",
+        gateway,
+        "/v1/chat/completions",
         {"messages": [{"content": "hi"}]},
     )
     assert status == 400
@@ -376,7 +372,8 @@ def test_invalid_message_missing_role(gateway):
 
 def test_invalid_message_missing_content(gateway):
     status, body, _ = _post(
-        gateway, "/v1/chat/completions",
+        gateway,
+        "/v1/chat/completions",
         {"messages": [{"role": "user"}]},
     )
     assert status == 400
@@ -385,7 +382,8 @@ def test_invalid_message_missing_content(gateway):
 
 def test_invalid_message_bad_role(gateway):
     status, body, _ = _post(
-        gateway, "/v1/chat/completions",
+        gateway,
+        "/v1/chat/completions",
         {"messages": [{"role": "unknown", "content": "hi"}]},
     )
     assert status == 400
@@ -394,7 +392,8 @@ def test_invalid_message_bad_role(gateway):
 
 def test_invalid_stream_type(gateway):
     status, body, _ = _post(
-        gateway, "/v1/chat/completions",
+        gateway,
+        "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}], "stream": "yes"},
     )
     assert status == 400
@@ -403,7 +402,8 @@ def test_invalid_stream_type(gateway):
 
 def test_invalid_max_tokens_type(gateway):
     status, body, _ = _post(
-        gateway, "/v1/chat/completions",
+        gateway,
+        "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}], "max_tokens": "fifty"},
     )
     assert status == 400
@@ -412,7 +412,8 @@ def test_invalid_max_tokens_type(gateway):
 
 def test_invalid_max_tokens_range(gateway):
     status, body, _ = _post(
-        gateway, "/v1/chat/completions",
+        gateway,
+        "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}], "max_tokens": -1},
     )
     assert status == 400
@@ -421,7 +422,8 @@ def test_invalid_max_tokens_range(gateway):
 
 def test_invalid_temperature_range(gateway):
     status, body, _ = _post(
-        gateway, "/v1/chat/completions",
+        gateway,
+        "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}], "temperature": 5.0},
     )
     assert status == 400
@@ -430,7 +432,8 @@ def test_invalid_temperature_range(gateway):
 
 def test_invalid_stop_type(gateway):
     status, body, _ = _post(
-        gateway, "/v1/chat/completions",
+        gateway,
+        "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}], "stop": 123},
     )
     assert status == 400
@@ -440,7 +443,8 @@ def test_invalid_stop_type(gateway):
 def test_model_default_omitted(gateway):
     """Omitting model should succeed."""
     status, body, _ = _post(
-        gateway, "/v1/chat/completions",
+        gateway,
+        "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}]},
     )
     assert status == 200
@@ -474,7 +478,8 @@ def test_full_contract_fields_forwarded(backend_gateway):
     respx.post("http://test-backend/v1/chat/completions").mock(side_effect=capture)
 
     _post(
-        backend_gateway, "/v1/chat/completions",
+        backend_gateway,
+        "/v1/chat/completions",
         {
             "messages": [{"role": "user", "content": "hi"}],
             "max_tokens": 100,
@@ -521,7 +526,8 @@ def multi_backend_gateway(monkeypatch):
 def test_routing_by_model_echo(multi_backend_gateway):
     """model: 'local' routes to echo backend and response has backend: 'local'."""
     status, body, _ = _post(
-        multi_backend_gateway, "/v1/chat/completions",
+        multi_backend_gateway,
+        "/v1/chat/completions",
         {"model": "local", "messages": [{"role": "user", "content": "hello"}]},
     )
     assert status == 200
@@ -532,7 +538,8 @@ def test_routing_by_model_echo(multi_backend_gateway):
 def test_routing_default_fallback(multi_backend_gateway):
     """Omitting model falls back to default (echo) backend."""
     status, body, _ = _post(
-        multi_backend_gateway, "/v1/chat/completions",
+        multi_backend_gateway,
+        "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hello"}]},
     )
     assert status == 200
@@ -542,7 +549,8 @@ def test_routing_default_fallback(multi_backend_gateway):
 def test_routing_unknown_model_fallback(multi_backend_gateway):
     """Unknown model name falls back to default backend."""
     status, body, _ = _post(
-        multi_backend_gateway, "/v1/chat/completions",
+        multi_backend_gateway,
+        "/v1/chat/completions",
         {
             "model": "nonexistent-backend",
             "messages": [{"role": "user", "content": "hello"}],
@@ -574,7 +582,8 @@ def test_routing_by_model_remote(multi_backend_gateway):
         )
     )
     status, body, _ = _post(
-        multi_backend_gateway, "/v1/chat/completions",
+        multi_backend_gateway,
+        "/v1/chat/completions",
         {
             "model": "remote-modal-llama",
             "messages": [{"role": "user", "content": "hello"}],
@@ -626,7 +635,8 @@ def test_routing_by_model_vllm(monkeypatch):
 
     with TestClient(main.app, raise_server_exceptions=False) as _client:
         status, body, _ = _post(
-            _client, "/v1/chat/completions",
+            _client,
+            "/v1/chat/completions",
             {
                 "model": "remote-modal-vllm",
                 "messages": [{"role": "user", "content": "hello"}],
@@ -640,7 +650,8 @@ def test_routing_by_model_vllm(monkeypatch):
 def test_backend_metadata_in_response(multi_backend_gateway):
     """Every response includes a 'backend' field."""
     status, body, _ = _post(
-        multi_backend_gateway, "/v1/chat/completions",
+        multi_backend_gateway,
+        "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}]},
     )
     assert status == 200
@@ -676,7 +687,12 @@ def http_default_gateway(monkeypatch):
     monkeypatch.setattr(main, "gateway_config", config)
     monkeypatch.setattr(main.settings, "backend_url", None)
     monkeypatch.setattr(main.settings, "api_key", None)
-    for f in ("request_count", "error_count", "prompt_tokens_total", "completion_tokens_total"):
+    for f in (
+        "request_count",
+        "error_count",
+        "prompt_tokens_total",
+        "completion_tokens_total",
+    ):
         monkeypatch.setattr(main.metrics, f, 0)
     monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
 
@@ -758,7 +774,8 @@ def test_auth_no_header_401(auth_gateway):
 
 def test_auth_wrong_key_401(auth_gateway):
     status, body, _ = _post(
-        auth_gateway, "/v1/chat/completions",
+        auth_gateway,
+        "/v1/chat/completions",
         COMPLETION_PAYLOAD,
         headers={"Authorization": "Bearer wrong-key"},
     )
@@ -768,7 +785,8 @@ def test_auth_wrong_key_401(auth_gateway):
 
 def test_auth_correct_bearer_200(auth_gateway):
     status, _, _ = _post(
-        auth_gateway, "/v1/chat/completions",
+        auth_gateway,
+        "/v1/chat/completions",
         COMPLETION_PAYLOAD,
         headers={"Authorization": "Bearer test-secret-key"},
     )
@@ -777,7 +795,8 @@ def test_auth_correct_bearer_200(auth_gateway):
 
 def test_auth_api_key_scheme(auth_gateway):
     status, _, _ = _post(
-        auth_gateway, "/v1/chat/completions",
+        auth_gateway,
+        "/v1/chat/completions",
         COMPLETION_PAYLOAD,
         headers={"Authorization": "Api-Key test-secret-key"},
     )
@@ -811,10 +830,7 @@ def test_backend_missing_usage_normalized(backend_gateway):
             },
         )
     )
-    status, body, _ = _post(
-        backend_gateway, "/v1/chat/completions",
-        COMPLETION_PAYLOAD
-    )
+    status, body, _ = _post(backend_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     assert status == 200
     assert body["usage"]["prompt_tokens"] == 0
     assert body["usage"]["completion_tokens"] == 0
@@ -842,10 +858,7 @@ def test_backend_missing_model_normalized(backend_gateway):
             },
         )
     )
-    status, body, _ = _post(
-        backend_gateway, "/v1/chat/completions",
-        COMPLETION_PAYLOAD
-    )
+    status, body, _ = _post(backend_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     assert status == 200
     assert body["model"] == "unknown"
 
@@ -871,10 +884,7 @@ def test_backend_missing_object_normalized(backend_gateway):
             },
         )
     )
-    status, body, _ = _post(
-        backend_gateway, "/v1/chat/completions",
-        COMPLETION_PAYLOAD
-    )
+    status, body, _ = _post(backend_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     assert status == 200
     assert body["object"] == "chat.completion"
 
@@ -909,10 +919,7 @@ def test_backend_extra_fields_stripped(backend_gateway):
             },
         )
     )
-    status, body, _ = _post(
-        backend_gateway, "/v1/chat/completions",
-        COMPLETION_PAYLOAD
-    )
+    status, body, _ = _post(backend_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     assert status == 200
 
     # Only the documented top-level keys should be present
@@ -1025,7 +1032,8 @@ def test_config_backend_latency_in_usage(multi_backend_gateway):
         )
     )
     _, body, _ = _post(
-        multi_backend_gateway, "/v1/chat/completions",
+        multi_backend_gateway,
+        "/v1/chat/completions",
         {
             "model": "remote-modal-llama",
             "messages": [{"role": "user", "content": "hi"}],
@@ -1066,7 +1074,8 @@ def test_model_field_not_forwarded_to_backend(multi_backend_gateway):
     respx.post("http://test-backend/v1/chat/completions").mock(side_effect=capture)
 
     _post(
-        multi_backend_gateway, "/v1/chat/completions",
+        multi_backend_gateway,
+        "/v1/chat/completions",
         {
             "model": "remote-modal-llama",
             "messages": [{"role": "user", "content": "hi"}],
@@ -1129,12 +1138,12 @@ def _assert_valid_completion(body: dict, backend_name: str) -> None:
     assert usage["latency_ms"] >= 0
 
 
-
 @pytest.mark.live
 def test_live_remote_modal_llama(live_gateway):
     """Live inference against remote-modal-llama backend."""
     status, body, _ = _post(
-        live_gateway, "/v1/chat/completions",
+        live_gateway,
+        "/v1/chat/completions",
         {
             "model": "remote-modal-llama",
             "messages": [{"role": "user", "content": "Say hi"}],
@@ -1154,7 +1163,8 @@ def test_live_remote_modal_llama(live_gateway):
 def test_live_remote_modal_vllm(live_gateway):
     """Live inference against remote-modal-vllm backend."""
     status, body, _ = _post(
-        live_gateway, "/v1/chat/completions",
+        live_gateway,
+        "/v1/chat/completions",
         {
             "model": "remote-modal-vllm",
             "messages": [{"role": "user", "content": "Say hi"}],
@@ -1181,7 +1191,8 @@ def test_live_backend_timeout(live_gateway, monkeypatch):
     monkeypatch.setattr(backend, "timeout", 1.0)
 
     status, body, _ = _post(
-        live_gateway, "/v1/chat/completions",
+        live_gateway,
+        "/v1/chat/completions",
         {"model": "remote-modal-vllm", "messages": [{"role": "user", "content": "hi"}]},
         timeout=10.0,
     )
@@ -1203,6 +1214,7 @@ def prom_gateway(monkeypatch):
     """Echo gateway with reset in-memory metrics."""
     monkeypatch.setattr(main.settings, "backend_url", None)
     monkeypatch.setattr(main.settings, "api_key", None)
+    monkeypatch.setattr(main.settings, "vllm_server_profile", "default")
     for f in (
         "request_count",
         "error_count",
@@ -1228,8 +1240,7 @@ def test_prom_requests_total_increments(prom_gateway):
     }
     before = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
 
-    _post(prom_gateway, "/v1/chat/completions",
-        COMPLETION_PAYLOAD)
+    _post(prom_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
 
     after = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
     assert after == before + 1
@@ -1247,7 +1258,8 @@ def test_prom_tokens_total_increments(prom_gateway):
     )
 
     _post(
-        prom_gateway, "/v1/chat/completions",
+        prom_gateway,
+        "/v1/chat/completions",
         {"model": "test", "messages": [{"role": "user", "content": "hello world"}]},
     )
 
@@ -1269,8 +1281,7 @@ def test_prom_request_duration_observed(prom_gateway):
         or 0.0
     )
 
-    _post(prom_gateway, "/v1/chat/completions",
-        COMPLETION_PAYLOAD)
+    _post(prom_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
 
     count_after = (
         REGISTRY.get_sample_value("gateway_request_duration_seconds_count", labels)
@@ -1283,8 +1294,7 @@ def test_prom_active_requests_gauge(prom_gateway):
     """gateway_active_requests gauge returns to 0 after request completes."""
     from prometheus_client import REGISTRY
 
-    _post(prom_gateway, "/v1/chat/completions",
-        COMPLETION_PAYLOAD)
+    _post(prom_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
 
     assert (REGISTRY.get_sample_value("gateway_active_requests") or 0.0) == 0.0
 
@@ -1300,8 +1310,7 @@ def test_prom_error_counter_increments(prom_gateway):
     }
     before = REGISTRY.get_sample_value("gateway_errors_total", labels) or 0.0
 
-    _post(prom_gateway, "/v1/chat/completions",
-        {"model": "test", "messages": []})
+    _post(prom_gateway, "/v1/chat/completions", {"model": "test", "messages": []})
 
     after = REGISTRY.get_sample_value("gateway_errors_total", labels) or 0.0
     assert after == before + 1
@@ -1320,7 +1329,8 @@ def test_prom_x_technique_header_sets_label(prom_gateway):
     before = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
 
     _post(
-        prom_gateway, "/v1/chat/completions",
+        prom_gateway,
+        "/v1/chat/completions",
         COMPLETION_PAYLOAD,
         headers={"X-Technique": "chunked_prefill"},
     )
@@ -1341,8 +1351,7 @@ def test_prom_missing_x_technique_defaults_to_baseline(prom_gateway):
     }
     before = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
 
-    _post(prom_gateway, "/v1/chat/completions",
-        COMPLETION_PAYLOAD)
+    _post(prom_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
 
     after = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
     assert after == before + 1
@@ -1430,4 +1439,6 @@ def test_docker_compose_nginx_exporter():
         cfg = yaml.safe_load(f)
     assert "nginx-exporter" in cfg["services"], "nginx-exporter service missing"
     cmd = " ".join(cfg["services"]["nginx-exporter"].get("command", []))
-    assert "nginx_status" in cmd, "nginx_status scrape URI missing from exporter command"
+    assert "nginx_status" in cmd, (
+        "nginx_status scrape URI missing from exporter command"
+    )

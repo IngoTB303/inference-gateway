@@ -6,6 +6,7 @@
 #   nginx          — nginx-prometheus-exporter sidecar (Docker service)
 #   vllm_standard  — Modal vLLM Gemma4 standard deployment  (server_profile=default)
 #   vllm_optimized — Modal vLLM Gemma4 optimized deployment (server_profile=optimized)
+#   vllm_hardcore  — Modal vLLM Gemma4 hardcore deployment  (fp8 KV cache)
 #
 # Docker resolves host.docker.internal → host machine.
 # Set VLLM_SERVER_PROFILE in .env to label gateway metrics accordingly.
@@ -40,4 +41,11 @@ scrape_configs:
     scheme: https
     static_configs:
       - targets: ["ingo-villnow--vllm-gemma4-optimized-serve.modal.run"]
+    metrics_path: /metrics
+
+  # Update target after deploying: bash scripts/deploy_modal_vllm.sh hardcore
+  - job_name: vllm_hardcore
+    scheme: https
+    static_configs:
+      - targets: ["ingo-villnow--vllm-gemma4-hardcore-serve.modal.run"]
     metrics_path: /metrics

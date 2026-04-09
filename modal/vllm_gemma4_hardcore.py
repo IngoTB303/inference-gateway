@@ -9,15 +9,19 @@ Requires a Modal secret named 'huggingface-secret' with HF_TOKEN set:
   modal secret create huggingface-secret HF_TOKEN=hf_...
 
 Optimizations applied on top of the 'optimized' profile:
-  --kv-cache-dtype fp8          quantises KV cache entries to FP8, cutting KV
-                                memory by ~50% and allowing more sequences in
-                                flight on A10G's 24 GB; stable for Gemma 4 per
-                                vLLM 0.19 release notes.
-  --max-num-batched-tokens 4096 larger chunks than the 'optimized' profile (512)
-                                improve single-request decode throughput while
-                                the smaller KV footprint keeps VRAM safe.
-  --max-num-seqs 128            double the 'optimized' profile; fp8 KV cache
-                                creates enough headroom for this on A10G.
+  --max-num-batched-tokens 8192   16× larger chunks than the 'optimized' profile
+                                  (512 tokens); allows much longer prompts to be
+                                  prefilled in a single pass, reducing TTFT for
+                                  large-context requests.
+  --max-num-seqs 256              4× the 'optimized' profile; Gemma 4 E2B weights
+                                  (~4 GB bfloat16) leave ample KV headroom on A10G
+                                  at 95% memory utilisation.
+  --gpu-memory-utilization 0.95   push more of the 24 GB VRAM into KV cache;
+                                  the profile run stays below OOM on A10G E2B.
+
+Note on FP8 KV cache: --kv-cache-dtype fp8 requires the fp8e4nv format which is
+only supported on Hopper (H100/H200, compute capability ≥ 9.0).  A10G is Ampere
+(cc 8.6) — fp8 KV cache is NOT used here.
 
 Gemma 4 note: heterogeneous attention head dims (256 / 512) force vLLM to use
 the Triton attention backend instead of FlashAttention — this is a model
@@ -41,10 +45,10 @@ VLLM_PORT = 8000
 MINUTES = 60
 
 MAX_MODEL_LEN = 8192
-GPU_MEMORY_UTILIZATION = 0.88  # slightly lower than other profiles; fp8 needs headroom
+GPU_MEMORY_UTILIZATION = 0.95  # push VRAM harder — safe for E2B on A10G
 
-CHUNKED_PREFILL_TOKENS = 4096  # much larger than optimised profile → better throughput
-MAX_NUM_SEQS = 128  # fp8 KV cache halves per-seq VRAM cost → safe to double
+CHUNKED_PREFILL_TOKENS = 8192  # max batch budget: single-pass prefill for long prompts
+MAX_NUM_SEQS = 256  # 4× the optimized profile; E2B weights leave KV headroom
 
 # ---------------------------------------------------------------------------
 # Image — CUDA 12.9 + vLLM 0.19.0 (guide-prescribed install for Gemma 4)
@@ -85,7 +89,7 @@ app = modal.App("vllm-gemma4-hardcore")
 @modal.concurrent(max_inputs=16)
 @modal.web_server(port=VLLM_PORT, startup_timeout=10 * MINUTES)
 def serve() -> None:
-    """Start vLLM with all safe throughput optimisations for Gemma 4 on A10G."""
+    """Start vLLM with maximum safe throughput flags for Gemma 4 on A10G."""
     cmd = [
         "vllm",
         "serve",
@@ -105,14 +109,12 @@ def serve() -> None:
         "--limit-mm-per-prompt",
         json.dumps({"image": 0, "video": 0, "audio": 0}),
         "--async-scheduling",
-        # --- fp8 KV cache (core of the hardcore profile) ---
-        "--kv-cache-dtype",
-        "fp8",
         # --- Chunked prefill + prefix caching (from optimized profile) ---
         "--enable-chunked-prefill",
         "--max-num-batched-tokens",
         str(CHUNKED_PREFILL_TOKENS),
         "--enable-prefix-caching",
+        # --- Increased concurrency (core of the hardcore profile) ---
         "--max-num-seqs",
         str(MAX_NUM_SEQS),
     ]

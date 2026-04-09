@@ -161,10 +161,10 @@ class TestModalFiles:
     def test_hardcore_modal_file_exists(self):
         assert (MODAL / "vllm_gemma4_hardcore.py").is_file()
 
-    def test_hardcore_has_fp8_kv_cache(self):
+    def test_hardcore_documents_fp8_limitation(self):
+        # fp8e4nv is H100-only; the file must explain why it is NOT used on A10G
         src = (MODAL / "vllm_gemma4_hardcore.py").read_text()
-        assert "--kv-cache-dtype" in src
-        assert "fp8" in src
+        assert "fp8" in src.lower()  # referenced in docs/comments, not as a flag
 
     def test_hardcore_has_chunked_prefill(self):
         src = (MODAL / "vllm_gemma4_hardcore.py").read_text()

@@ -49,6 +49,6 @@ backends:
     type: http
     url: https://your-modal-username--vllm-gemma4-hardcore-serve.modal.run/
     timeout: 120
-    model: gemma-4-e2b-it
+    model: gemma-4-e2b-it  # 8192-token batches, 256 seqs, 95% GPU util
 
 default_backend: local
