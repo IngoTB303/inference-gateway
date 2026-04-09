@@ -5,10 +5,12 @@ description = "OpenAI-compatible HTTP inference gateway with echo mode and backe
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.115",
     "httpx>=0.28",
     "prometheus_client>=0.20",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
