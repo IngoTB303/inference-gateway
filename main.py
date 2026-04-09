@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -24,6 +25,64 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# OpenTelemetry (optional — zero overhead when OTEL_TRACES_EXPORTER != "otlp")
+# ---------------------------------------------------------------------------
+
+try:
+    from opentelemetry import trace as _otel_trace
+    from opentelemetry.propagate import extract as _otel_extract, inject as _otel_inject
+    _OTEL_AVAILABLE = True
+except ImportError:
+    _OTEL_AVAILABLE = False
+
+
+def _otlp_traces_enabled() -> bool:
+    return os.environ.get("OTEL_TRACES_EXPORTER", "none").lower() == "otlp"
+
+
+def _setup_otel() -> None:
+    """Configure TracerProvider with OTLPSpanExporter when OTEL_TRACES_EXPORTER=otlp."""
+    if not _otlp_traces_enabled() or not _OTEL_AVAILABLE:
+        return
+    try:
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource, SERVICE_NAME
+    except ImportError:
+        logger.warning("opentelemetry-sdk / exporter not installed; tracing disabled")
+        return
+    endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4317")
+    resource = Resource({SERVICE_NAME: os.environ.get("OTEL_SERVICE_NAME", "inference-gateway")})
+    provider = TracerProvider(resource=resource)
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
+    _otel_trace.set_tracer_provider(provider)
+    logger.info("OTel tracing enabled → %s", endpoint)
+
+
+@contextlib.contextmanager
+def _span(name: str, carrier: dict | None = None, **attrs):
+    """Start a tracing span from the incoming W3C context. Yields None when OTel is off."""
+    if not _OTEL_AVAILABLE:
+        yield None
+        return
+    ctx = _otel_extract(carrier or {})
+    tracer = _otel_trace.get_tracer("inference-gateway")
+    with tracer.start_as_current_span(name, context=ctx) as s:
+        for k, v in attrs.items():
+            s.set_attribute(k, v)
+        yield s
+
+
+def _outgoing_headers(technique: str) -> dict[str, str]:
+    """Build upstream request headers, injecting W3C trace context when OTel is active."""
+    headers: dict[str, str] = {"X-Technique": technique}
+    if _OTEL_AVAILABLE:
+        _otel_inject(headers)
+    return headers
 
 
 # ---------------------------------------------------------------------------
@@ -406,13 +465,22 @@ async def chat_completions(
     server_profile = settings.vllm_server_profile
     log = logging.LoggerAdapter(logger, {"request_id": request_id})
 
-    ACTIVE_REQUESTS.inc()
-    try:
-        return await _handle_completions(
-            request, request_id, technique, server_profile, start, log
-        )
-    finally:
-        ACTIVE_REQUESTS.dec()
+    with _span(
+        "chat.completions",
+        dict(request.headers),
+        technique=technique,
+        server_profile=server_profile,
+    ) as span:
+        ACTIVE_REQUESTS.inc()
+        try:
+            response = await _handle_completions(
+                request, request_id, technique, server_profile, start, log
+            )
+            if span is not None:
+                span.set_attribute("http.status_code", response.status_code)
+            return response
+        finally:
+            ACTIVE_REQUESTS.dec()
 
 
 async def _handle_completions(
@@ -592,6 +660,8 @@ async def _handle_with_config(
 ) -> Response:
     assert gateway_config is not None
     backend = gateway_config.get_backend_for_model(model)
+    if _OTEL_AVAILABLE:
+        _otel_trace.get_current_span().set_attribute("backend", backend.name)
 
     backend_body = {k: v for k, v in forward_body.items() if k != "model"}
     if isinstance(backend, HttpBackend) and backend.model is not None:
@@ -683,7 +753,7 @@ async def _proxy_non_stream(
 ) -> Response:
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=body, headers={"X-Technique": technique})
+            resp = await client.post(url, json=body, headers=_outgoing_headers(technique))
     except httpx.TimeoutException:
         latency_ms = (time.monotonic() - start) * 1000
         record_metrics(504, latency_ms, 0, 0, technique=technique, server_profile=server_profile)
@@ -741,7 +811,7 @@ async def _proxy_stream(
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             async with client.stream(
-                "POST", url, json=body, headers={"X-Technique": technique}
+                "POST", url, json=body, headers=_outgoing_headers(technique)
             ) as resp:
                 if resp.status_code >= 500:
                     latency_ms = (time.monotonic() - start) * 1000
@@ -793,6 +863,7 @@ async def _proxy_stream(
 def main() -> None:
     import uvicorn
 
+    _setup_otel()
     prometheus_client.start_http_server(settings.metrics_port)
     logger.info("Prometheus metrics available on port %d", settings.metrics_port)
 

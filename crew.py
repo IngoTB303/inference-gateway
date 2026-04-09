@@ -64,6 +64,41 @@ def _gateway_root() -> str:
 
 
 # ---------------------------------------------------------------------------
+# OpenTelemetry (optional — enabled when OTEL_TRACES_EXPORTER=otlp)
+# ---------------------------------------------------------------------------
+
+
+def _setup_otel() -> "Any | None":
+    """Configure TracerProvider. Returns the provider, or None if disabled/unavailable."""
+    if os.environ.get("OTEL_TRACES_EXPORTER", "none").lower() != "otlp":
+        return None
+    try:
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource, SERVICE_NAME
+        from opentelemetry import trace
+    except ImportError:
+        print("opentelemetry packages not installed; tracing disabled.", file=sys.stderr)
+        return None
+    endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4317")
+    resource = Resource({SERVICE_NAME: os.environ.get("OTEL_SERVICE_NAME", "crew")})
+    provider = TracerProvider(resource=resource)
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
+    trace.set_tracer_provider(provider)
+    return provider
+
+
+def _otel_inject_headers(headers: dict) -> None:
+    """Inject current W3C trace context into headers. No-op if OTel is unavailable."""
+    try:
+        from opentelemetry.propagate import inject
+        inject(headers)
+    except ImportError:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # vLLM readiness check
 # ---------------------------------------------------------------------------
 
@@ -251,12 +286,32 @@ def main() -> None:
     print(f"Topic   : {args.topic}", file=sys.stderr)
     print(f"Technique: {args.technique}\n", file=sys.stderr)
 
+    _otel_provider = _setup_otel()
     crew = build_crew(technique=args.technique, topic=args.topic)
-    try:
-        result = crew.kickoff()
-    except Exception as exc:
-        print(f"\nCrew failed: {exc}", file=sys.stderr)
-        sys.exit(1)
+
+    # Wrap kickoff in a span and propagate W3C trace context to the gateway
+    if _otel_provider is not None:
+        import contextlib
+        from opentelemetry import trace as _otel_trace
+        _span_cm = _otel_trace.get_tracer("crew").start_as_current_span("crew.run")
+    else:
+        import contextlib
+        _span_cm = contextlib.nullcontext()
+
+    with _span_cm as span:
+        if span is not None:
+            span.set_attribute("llm.technique", args.technique)
+        _otel_inject_headers(litellm.headers)
+        try:
+            result = crew.kickoff()
+        except Exception as exc:
+            print(f"\nCrew failed: {exc}", file=sys.stderr)
+            if _otel_provider is not None:
+                _otel_provider.shutdown()
+            sys.exit(1)
+
+    if _otel_provider is not None:
+        _otel_provider.shutdown()
 
     print("\n--- Crew output ---")
     print(result)

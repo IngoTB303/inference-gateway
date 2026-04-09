@@ -35,6 +35,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Load .env so OPENAI_API_KEY / API_KEY are available to curl health-poll
+if [[ -f "$REPO_ROOT/.env" ]]; then
+    set -a; source "$REPO_ROOT/.env"; set +a
+fi
+
 # shellcheck source=_common.sh
 source "$SCRIPT_DIR/_common.sh"
 
@@ -100,7 +105,7 @@ wait_for_backend() {
       --max-time 30 \
       -X POST "${GATEWAY_BASE}/chat/completions" \
       -H "Content-Type: application/json" \
-      -H "Authorization: Bearer ${OPENAI_API_KEY:-dummy}" \
+      -H "Authorization: Bearer ${OPENAI_API_KEY:-${API_KEY:-dummy}}" \
       -d "{\"model\":\"${backend}\",\"messages\":[{\"role\":\"user\",\"content\":\"ready?\"}],\"max_tokens\":1}" \
       2>/dev/null || echo "000")
 
@@ -173,7 +178,7 @@ for profile in "${PROFILES[@]}"; do
 
     if MODEL_NAME="$backend" \
        CREW_VLLM_WAIT_S=0 \
-       uv run --group crew python "$REPO_ROOT/crew.py" \
+       uv run --group crew --group otel python "$REPO_ROOT/crew.py" \
          --topic "$TOPIC" \
          --technique "$technique"; then
       ok=$(( ok + 1 ))
