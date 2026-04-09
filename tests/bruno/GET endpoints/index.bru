@@ -1,0 +1,42 @@
+meta {
+  name: Index (endpoint listing)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("service is inference-gateway", function() {
+    expect(res.body.service).to.equal("inference-gateway");
+  });
+
+  test("endpoints is a non-empty array", function() {
+    expect(res.body.endpoints).to.be.an("array").with.length.greaterThan(0);
+  });
+
+  test("each endpoint has method and path", function() {
+    res.body.endpoints.forEach(function(e) {
+      expect(e).to.have.property("method");
+      expect(e).to.have.property("path");
+    });
+  });
+
+  test("/v1/chat/completions is listed", function() {
+    var paths = res.body.endpoints.map(function(e) { return e.path; });
+    expect(paths).to.include("/v1/chat/completions");
+  });
+
+  test("/v1/models is listed", function() {
+    var paths = res.body.endpoints.map(function(e) { return e.path; });
+    expect(paths).to.include("/v1/models");
+  });
+}

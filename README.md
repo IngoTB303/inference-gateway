@@ -76,9 +76,12 @@ default_backend: local
 
 | Method | Path | Description |
 |---|---|---|
+| `GET` | `/` | Index — lists all available endpoints |
 | `POST` | `/v1/chat/completions` | Main inference endpoint |
+| `GET` | `/v1/models` | Proxy to the default HTTP backend's `/v1/models` |
 | `GET` | `/v1/backends` | List configured backends and default |
-| `GET` | `/healthz` | Health check |
+| `GET` | `/healthz` | Liveness probe |
+| `GET` | `/health` | Extended health check with upstream probe |
 | `GET` | `/metrics` | Legacy JSON counters (request count, latency, tokens) |
 | `GET` | `:9101/metrics` | Prometheus-format metrics (dedicated scrape port) |
 

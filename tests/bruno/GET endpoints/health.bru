@@ -1,0 +1,25 @@
+meta {
+  name: Extended Health Check
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{base_url}}/health
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("body has status field", function() {
+    expect(res.body).to.have.property("status");
+  });
+  
+  test("status is ok or degraded or misconfigured", function() {
+    expect(["ok", "degraded", "misconfigured"]).to.include(res.body.status);
+  });
+}

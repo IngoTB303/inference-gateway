@@ -121,6 +121,23 @@ def test_healthz(gateway):
     assert body == {"status": "ok"}
 
 
+def test_root_endpoint(gateway):
+    status, body = _get(gateway, "/")
+    assert status == 200
+    assert body["service"] == "inference-gateway"
+    paths = [e["path"] for e in body["endpoints"]]
+    assert "/v1/chat/completions" in paths
+    assert "/v1/models" in paths
+    assert "/health" in paths
+
+
+def test_health_echo_mode(gateway):
+    status, body = _get(gateway, "/health")
+    assert status == 200
+    assert body["status"] == "ok"
+    assert body["upstream"] is None
+
+
 def test_unknown_route_get(gateway):
     status, _ = _get(gateway, "/unknown")
     assert status == 404
@@ -638,6 +655,57 @@ def test_get_backends_endpoint(multi_backend_gateway):
     assert "local" in names
     assert "remote-modal-llama" in names
     assert body["default"] == "local"
+
+
+def test_v1_models_echo_only_404(gateway):
+    """GET /v1/models returns 404 when no HTTP backend is configured."""
+    status, body = _get(gateway, "/v1/models")
+    assert status == 404
+    assert body["error"] == "not_found"
+
+
+@pytest.fixture
+def http_default_gateway(monkeypatch):
+    """Gateway where the default backend is an HttpBackend (for /v1/models tests)."""
+    from gateway.backends.echo import EchoBackend
+
+    remote = HttpBackend(name="remote", url="http://test-backend")
+    echo = EchoBackend(name="local")
+    config = GatewayConfig(backends=[remote, echo], default_backend=remote)
+
+    monkeypatch.setattr(main, "gateway_config", config)
+    monkeypatch.setattr(main.settings, "backend_url", None)
+    monkeypatch.setattr(main.settings, "api_key", None)
+    for f in ("request_count", "error_count", "prompt_tokens_total", "completion_tokens_total"):
+        monkeypatch.setattr(main.metrics, f, 0)
+    monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
+
+    with TestClient(main.app, raise_server_exceptions=False) as client:
+        yield client
+
+
+@respx.mock
+def test_v1_models_proxies_to_backend(http_default_gateway):
+    """GET /v1/models is proxied to the default HTTP backend."""
+    models_response = {"object": "list", "data": [{"id": "gemma-4", "object": "model"}]}
+    respx.get("http://test-backend/v1/models").mock(
+        return_value=httpx.Response(200, json=models_response)
+    )
+    status, body = _get(http_default_gateway, "/v1/models")
+    assert status == 200
+    assert body["object"] == "list"
+    assert any(m["id"] == "gemma-4" for m in body["data"])
+
+
+@respx.mock
+def test_v1_models_upstream_unavailable(http_default_gateway):
+    """GET /v1/models returns 502 when the upstream is unreachable."""
+    respx.get("http://test-backend/v1/models").mock(
+        side_effect=httpx.ConnectError("refused")
+    )
+    status, body = _get(http_default_gateway, "/v1/models")
+    assert status == 502
+    assert body["error"] == "upstream_unavailable"
 
 
 def test_config_loading():
