@@ -1,0 +1,55 @@
+meta {
+  name: Prometheus — scrape targets
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{prometheus_url}}/api/v1/targets
+  body: none
+  auth: none
+}
+
+docs {
+  Lists all configured scrape targets and their current state.
+  Expected targets: gateway, gateway2, nginx, vllm_standard, vllm_optimized.
+
+  "health": "up"   — Prometheus is successfully scraping this target.
+  "health": "down" — Target is unreachable (e.g. gateway not started, vLLM not running).
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("response status is success", function() {
+    expect(res.body.status).to.equal("success");
+  });
+
+  test("active targets array is present", function() {
+    expect(res.body.data.activeTargets).to.be.an("array");
+  });
+
+  test("gateway job is configured", function() {
+    var jobs = res.body.data.activeTargets.map(function(t) { return t.labels.job; });
+    expect(jobs).to.include("gateway");
+  });
+
+  test("gateway2 job is configured", function() {
+    var jobs = res.body.data.activeTargets.map(function(t) { return t.labels.job; });
+    expect(jobs).to.include("gateway2");
+  });
+
+  test("nginx job is configured", function() {
+    var jobs = res.body.data.activeTargets.map(function(t) { return t.labels.job; });
+    expect(jobs).to.include("nginx");
+  });
+
+  test("gateway job is UP (gateway instance must be running)", function() {
+    var gw = res.body.data.activeTargets.find(function(t) { return t.labels.job === "gateway"; });
+    if (gw) {
+      expect(gw.health).to.equal("up");
+    }
+  });
+}

@@ -1,0 +1,36 @@
+meta {
+  name: Prometheus — query gateway_requests_total
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{prometheus_url}}/api/v1/query?query=gateway_requests_total
+  body: none
+  auth: none
+}
+
+docs {
+  Instant query for gateway_requests_total.
+  Returns an empty result set if no requests have been made yet — that is still
+  a valid (status: success) response.
+
+  Send a request to the gateway first to see a non-zero result:
+    curl -s http://localhost:8080/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{"model":"local","messages":[{"role":"user","content":"hi"}]}'
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("query response status is success", function() {
+    expect(res.body.status).to.equal("success");
+  });
+
+  test("result type is vector", function() {
+    expect(res.body.data.resultType).to.equal("vector");
+  });
+}

@@ -1,0 +1,45 @@
+meta {
+  name: Grafana — Prometheus datasource
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{grafana_url}}/api/datasources
+  body: none
+  auth: basic
+}
+
+auth:basic {
+  username: admin
+  password: admin
+}
+
+docs {
+  Lists configured Grafana datasources.
+  Verifies that the Prometheus datasource is present and points to the local Prometheus instance.
+
+  Default credentials: admin / admin (set in monitoring/grafana/provisioning).
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("datasources array is present", function() {
+    expect(res.body).to.be.an("array");
+  });
+
+  test("Prometheus datasource is configured", function() {
+    var ds = res.body.find(function(d) { return d.type === "prometheus"; });
+    expect(ds).to.not.be.undefined;
+  });
+
+  test("Prometheus datasource is the default", function() {
+    var ds = res.body.find(function(d) { return d.type === "prometheus"; });
+    if (ds) {
+      expect(ds.isDefault).to.equal(true);
+    }
+  });
+}

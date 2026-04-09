@@ -1,0 +1,26 @@
+meta {
+  name: Prometheus — health
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{prometheus_url}}/-/healthy
+  body: none
+  auth: none
+}
+
+docs {
+  Prometheus liveness probe. Returns "Prometheus Server is Healthy." (plain text).
+  Start monitoring stack first: cd monitoring && docker compose up -d
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("body confirms Prometheus is healthy", function() {
+    expect(res.body).to.include("Healthy");
+  });
+}
