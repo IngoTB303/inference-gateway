@@ -1,7 +1,7 @@
 meta {
-  name: Real Backend - local-llama
+  name: Modal Gemma4 VLLM hardcore
   type: http
-  seq: 16
+  seq: 24
 }
 
 post {
@@ -10,31 +10,31 @@ post {
   auth: inherit
 }
 
+headers {
+  X-Technique: hardcore
+}
+
 body:json {
   {
-    "model": "local-llama",
+    "model": "modal-gemma4-hardcore",
     "messages": [{"role": "user", "content": "Hi, what is your key advantage?"}],
     "max_tokens": 1024
   }
-}
-
-script:pre-request {
-  bru.runner.skipRequest()
 }
 
 tests {
   test("status is 200", function() {
     expect(res.status).to.equal(200);
   });
-  
-  test("backend field is 'local-llama'", function() {
-    expect(res.body.backend).to.equal("local-llama");
+
+  test("backend field is 'modal-gemma4-hardcore'", function() {
+    expect(res.body.backend).to.equal("modal-gemma4-hardcore");
   });
-  
+
   test("choices has at least one entry", function() {
     expect(res.body.choices).to.have.length.above(0);
   });
-  
+
   test("usage.latency_ms is present and non-negative", function() {
     expect(res.body.usage).to.have.property("latency_ms");
     expect(res.body.usage.latency_ms).to.be.at.least(0);
@@ -42,6 +42,7 @@ tests {
 }
 
 docs {
-  Routes to the local llama.cpp backend (http://localhost:8081).
-  Requires a running llama.cpp server on port 8081.
+  Routes to the hardcore-optimized Modal vLLM backend.
+  fp8 KV cache + chunked prefill + prefix caching.
+  Requires the Modal vLLM hardcore server to be running.
 }

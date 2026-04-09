@@ -19,19 +19,15 @@ tests {
     expect(res.headers["content-type"]).to.include("text/plain");
   });
 
-  test("gateway_requests_total is present", function() {
+  test("gateway_requests_total metric is defined", function() {
     expect(res.body).to.include("gateway_requests_total");
   });
 
-  test("gateway_active_requests is present", function() {
+  test("gateway_active_requests metric is defined", function() {
     expect(res.body).to.include("gateway_active_requests");
   });
 
-  test("technique label is present", function() {
-    expect(res.body).to.include('technique="');
-  });
-
-  test("server_profile label is present", function() {
-    expect(res.body).to.include('server_profile="');
-  });
+  // Note: technique= and server_profile= label values only appear after at least
+  // one request has been processed. Run the Metrics folder tests (which fire a
+  // request first) to assert label presence.
 }

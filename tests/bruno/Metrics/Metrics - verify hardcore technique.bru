@@ -1,0 +1,26 @@
+meta {
+  name: Metrics - verify hardcore technique
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{metrics_url}}/metrics
+  body: none
+  auth: none
+}
+
+tests {
+  test("metrics endpoint returns 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("hardcore technique label appears in metrics", function() {
+    expect(res.body).to.include('technique="hardcore"');
+  });
+}
+
+docs {
+  Run "Metrics - X-Technique hardcore" first to generate a request,
+  then run this test to confirm the technique label is recorded.
+}
