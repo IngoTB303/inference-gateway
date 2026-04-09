@@ -32,3 +32,8 @@ dev = [
 deploy = [
     "modal>=0.73",
 ]
+crew = [
+    "crewai>=0.76",
+    "litellm>=1.50",
+    "gradio>=6.0",
+]
