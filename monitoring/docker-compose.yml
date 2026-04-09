@@ -40,3 +40,11 @@ services:
       - "9113:9113"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4317:4317"     # OTLP gRPC receiver
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"

@@ -1288,6 +1288,11 @@ dev = [
     { name = "respx" },
     { name = "ruff" },
 ]
+otel = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-sdk" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1310,6 +1315,11 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "respx", specifier = ">=0.21" },
     { name = "ruff", specifier = ">=0.15.3" },
+]
+otel = [
+    { name = "opentelemetry-api", specifier = ">=1.20" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.20" },
+    { name = "opentelemetry-sdk", specifier = ">=1.20" },
 ]
 
 [[package]]

@@ -37,3 +37,8 @@ crew = [
     "litellm>=1.50",
     "gradio>=6.0",
 ]
+otel = [
+    "opentelemetry-api>=1.20",
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.20",
+]

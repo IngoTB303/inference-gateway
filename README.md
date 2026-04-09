@@ -41,6 +41,8 @@ The server listens on `http://localhost:8080` by default.
 | `GATEWAY_METRICS_PORT` | `9101` | Port for the Prometheus metrics scrape endpoint. Set to `9102` for a second instance. |
 | `GPU_HOURLY_COST_USD` | `1.10` | Hourly GPU cost used to estimate `gateway_gpu_cost_usd_total` (A10 default) |
 | `VLLM_SERVER_PROFILE` | `default` | Server profile label attached to all Prometheus metrics (e.g. `chunked_prefill`, `baseline`) |
+| `OTEL_TRACES_EXPORTER` | `none` | Set to `otlp` to enable distributed tracing. Any other value disables tracing entirely (zero overhead). |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:4317` | gRPC endpoint for the OTLP collector (e.g. Jaeger). Only used when `OTEL_TRACES_EXPORTER=otlp`. |
 
 ### Backend configuration (`config.yaml`)
 
@@ -491,6 +493,54 @@ Check all targets are **UP**: http://localhost:9090/targets
 Set `VLLM_SERVER_PROFILE=default` or `VLLM_SERVER_PROFILE=optimized` in `.env` to label gateway metrics with the active deployment.
 
 Grafana loads with a pre-provisioned Prometheus datasource and four dashboards: **gateway-proxy**, **overview**, **technique-cost**, **tinyllama-ops**.
+
+---
+
+## Distributed Tracing (OpenTelemetry)
+
+Tracing is a **stretch-goal feature** that is off by default. When enabled, each gateway request is wrapped in a span, and `crew.py` propagates W3C trace context so you can see the full `crew → gateway → vLLM` trace in one view.
+
+**Prerequisites:** install the optional OTel packages:
+
+```bash
+uv sync --group otel
+```
+
+**1. Start Jaeger (all-in-one) via the monitoring stack:**
+
+```bash
+cd monitoring && docker compose up -d jaeger
+# Jaeger UI: http://localhost:16686
+# OTLP gRPC receiver: localhost:4317
+```
+
+**2. Enable tracing in `.env`:**
+
+```bash
+OTEL_TRACES_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317
+```
+
+**3. Restart the gateway, then run a request:**
+
+```bash
+uv run python main.py
+curl -s http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"default","messages":[{"role":"user","content":"hi"}]}'
+```
+
+Open http://localhost:16686, select service `inference-gateway`, and you should see a `chat.completions` span with attributes `technique`, `server_profile`, `backend`, and `http.status_code`.
+
+**4. Run the crew with tracing:**
+
+```bash
+OTEL_TRACES_EXPORTER=otlp python crew.py --technique chunked_prefill
+```
+
+This creates a `crew.run` root span (with `llm.technique=chunked_prefill`) that is the parent of all gateway spans generated during that run.
+
+**Default (`OTEL_TRACES_EXPORTER=none`):** no OTel packages are imported, no connections are attempted — zero performance cost.
 
 ---
 
