@@ -1,0 +1,30 @@
+meta {
+  name: Grafana — health
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{grafana_url}}/api/health
+  body: none
+  auth: none
+}
+
+docs {
+  Grafana liveness probe. Returns JSON with "database": "ok".
+  Start monitoring stack first: cd monitoring && docker compose up -d
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("database is ok", function() {
+    expect(res.body.database).to.equal("ok");
+  });
+
+  test("version field is present", function() {
+    expect(res.body.version).to.be.a("string");
+  });
+}

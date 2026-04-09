@@ -1,0 +1,36 @@
+meta {
+  name: Nginx exporter — metrics
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{nginx_exporter_url}}/metrics
+  body: none
+  auth: none
+}
+
+docs {
+  Fetches Prometheus metrics from the nginx-prometheus-exporter (port 9113).
+  Verifies that core nginx connection metrics are exposed.
+
+  Start monitoring stack first: cd monitoring && docker compose up -d
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("nginx active connections metric is present", function() {
+    expect(res.body).to.include("nginx_connections_active");
+  });
+
+  test("nginx accepted connections metric is present", function() {
+    expect(res.body).to.include("nginx_connections_accepted");
+  });
+
+  test("nginx handled connections metric is present", function() {
+    expect(res.body).to.include("nginx_connections_handled");
+  });
+}

@@ -1387,6 +1387,14 @@ def test_nginx_config_stub_status():
     assert "/nginx_status" in content
 
 
+def test_nginx_config_json_error_page():
+    """nginx-gateway-lb.conf returns JSON for 502/503/504 upstream errors."""
+    content = open("nginx-gateway-lb.conf").read()
+    assert "error_page" in content
+    assert "502" in content
+    assert "backend_unavailable" in content
+
+
 def test_nginx_config_rootless():
     """nginx-gateway-lb.conf uses /tmp paths so it runs without root."""
     content = open("nginx-gateway-lb.conf").read()

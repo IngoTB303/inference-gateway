@@ -215,7 +215,7 @@ uv run pytest tests/test_gateway.py::test_routing_by_model_echo   # single test
 
 The suite uses a FastAPI `TestClient` and [respx](https://lundberg.github.io/respx/) to mock backend `httpx` calls. No running backend is required.
 
-**60 tests** covering: GET endpoints, echo shape, request-ID, validation errors (400), auth (401), SSE streaming, backend proxy, response normalization, multi-backend routing, metrics, `latency_ms` in usage, Prometheus counter/histogram/gauge behaviour, `X-Technique` label propagation.
+**74 tests** covering: GET endpoints, echo shape, request-ID, validation errors (400), auth (401), SSE streaming, backend proxy, response normalization, multi-backend routing, metrics, `latency_ms` in usage, Prometheus counter/histogram/gauge behaviour, `X-Technique` label propagation, Nginx config validation.
 
 ### Live backend tests
 
@@ -234,6 +234,75 @@ Live tests skip gracefully (rather than fail) when a backend returns 502/504.
 ### Bruno collection
 
 Open `tests/bruno/` in [Bruno](https://www.usebruno.com/) and select the **local** environment (`base_url = http://localhost:8080`, `metrics_url = http://localhost:9101`).
+
+---
+
+## CrewAI Agentic Client
+
+`crew.py` runs a two-agent **Researcher → Writer** pipeline through the gateway. The Researcher collects 3–5 bullet points on a topic; the Writer turns them into a short paragraph (≤120 words).
+
+### Install crew dependencies
+
+```bash
+uv sync --group crew
+```
+
+### Run the crew
+
+```bash
+# Default topic, baseline technique
+uv run --group crew python crew.py
+
+# Custom topic
+uv run --group crew python crew.py --topic "speculative decoding in vLLM"
+
+# A/B technique label (shows up in Prometheus metrics)
+uv run --group crew python crew.py --topic "prefix caching for RAG" --technique chunked_prefill
+```
+
+### Crew environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GATEWAY_OPENAI_BASE` | `http://127.0.0.1:8780/v1` | Full gateway URL including `/v1` |
+| `GATEWAY_USE_LOAD_BALANCER` | `true` | Set to `false` to bypass Nginx and hit `:8080` directly |
+| `MODEL_NAME` | `modal-gemma4-optimized` | Model name passed to the gateway |
+| `OPENAI_API_KEY` / `API_KEY` | `dummy` | API key forwarded to the gateway |
+| `CREW_VLLM_WAIT_S` | `0` | Seconds to poll `/v1/models` before starting (0 = skip) |
+| `CREW_LLM_STREAM` | `true` | Enable streaming for LLM calls |
+
+### Failure modes
+
+| Situation | Behaviour |
+|---|---|
+| Gateway unreachable | Exits with clear error message before crew starts |
+| Gateway reports misconfigured upstream (`/health`) | Exits with `status=2` and instructions |
+| vLLM not ready within `CREW_VLLM_WAIT_S` | Exits with `status=3` and timeout message |
+| Empty / bad model response | CrewAI retries internally; logged to stderr |
+
+---
+
+## Chat UI
+
+`chat_ui.py` is a Gradio web app with two tabs:
+
+- **💬 Chat** — streaming chat directly against `/v1/chat/completions`; select the `X-Technique` label per request
+- **🤖 CrewAI** — editable topic and technique; runs the Researcher→Writer crew and shows the output
+
+### Start the Chat UI
+
+```bash
+# Gateway must already be running (uv run python main.py)
+uv run --group crew python chat_ui.py
+```
+
+Open **http://localhost:7860** in your browser.
+
+The UI inherits `GATEWAY_OPENAI_BASE`, `MODEL_NAME`, and `API_KEY` from `.env` / the shell environment.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CHAT_UI_PORT` | `7860` | Port Gradio listens on |
 
 ---
 
