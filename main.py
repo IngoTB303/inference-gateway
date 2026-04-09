@@ -294,8 +294,7 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONR
 
 _ENDPOINTS = [
     {"method": "GET",  "path": "/",                    "description": "This index — all available endpoints"},
-    {"method": "GET",  "path": "/healthz",             "description": "Liveness probe"},
-    {"method": "GET",  "path": "/health",              "description": "Extended health check with upstream status"},
+    {"method": "GET",  "path": "/health",              "description": "Health check with upstream status"},
     {"method": "GET",  "path": "/metrics",             "description": "Legacy JSON counters (request count, latency, tokens)"},
     {"method": "GET",  "path": "/v1/backends",         "description": "List configured backends and default"},
     {"method": "GET",  "path": "/v1/models",           "description": "Proxy GET /v1/models to the default HTTP backend"},
@@ -309,21 +308,16 @@ async def index() -> dict[str, Any]:
     return {"service": "inference-gateway", "endpoints": _ENDPOINTS}
 
 
-@app.get("/healthz")
-async def healthz() -> dict[str, str]:
-    return {"status": "ok"}
-
-
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    """Extended health check — probes the default HTTP backend's /health or /healthz."""
+    """Health check — returns ok; probes the default HTTP backend's /health when configured."""
     from gateway.backends.http_backend import HttpBackend
 
     if gateway_config is None or not isinstance(gateway_config.default_backend, HttpBackend):
         return {"status": "ok", "upstream": None}
 
     backend = gateway_config.default_backend
-    probe_url = backend.base_url + "/healthz"
+    probe_url = backend.base_url + "/health"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(probe_url)
