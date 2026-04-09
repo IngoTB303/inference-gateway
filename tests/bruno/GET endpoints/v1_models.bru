@@ -1,0 +1,32 @@
+meta {
+  name: Models List
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{base_url}}/v1/models
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("status is 200 or 404", function() {
+    // 404 = echo-only mode (no HTTP backend), 200 = proxied from upstream
+    expect([200, 404]).to.include(res.status);
+  });
+  
+  test("if 200: response has object and data fields", function() {
+    if (res.status === 200) {
+      expect(res.body).to.have.property("object");
+      expect(res.body).to.have.property("data");
+      expect(res.body.data).to.be.an("array");
+    }
+  });
+  
+  test("if 404: error is not_found", function() {
+    if (res.status === 404) {
+      expect(res.body.error).to.equal("not_found");
+    }
+  });
+}

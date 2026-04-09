@@ -292,9 +292,84 @@ async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONR
     return JSONResponse(status_code=exc.status_code, content={"error": str(exc.detail)})
 
 
+_ENDPOINTS = [
+    {"method": "GET",  "path": "/",                    "description": "This index — all available endpoints"},
+    {"method": "GET",  "path": "/healthz",             "description": "Liveness probe"},
+    {"method": "GET",  "path": "/health",              "description": "Extended health check with upstream status"},
+    {"method": "GET",  "path": "/metrics",             "description": "Legacy JSON counters (request count, latency, tokens)"},
+    {"method": "GET",  "path": "/v1/backends",         "description": "List configured backends and default"},
+    {"method": "GET",  "path": "/v1/models",           "description": "Proxy GET /v1/models to the default HTTP backend"},
+    {"method": "POST", "path": "/v1/chat/completions", "description": "OpenAI-compatible chat completion (streaming supported)"},
+    {"method": "GET",  "path": ":9101/metrics",        "description": "Prometheus scrape endpoint (dedicated port)"},
+]
+
+
+@app.get("/")
+async def index() -> dict[str, Any]:
+    return {"service": "inference-gateway", "endpoints": _ENDPOINTS}
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/health")
+async def health() -> dict[str, Any]:
+    """Extended health check — probes the default HTTP backend's /health or /healthz."""
+    from gateway.backends.http_backend import HttpBackend
+
+    if gateway_config is None or not isinstance(gateway_config.default_backend, HttpBackend):
+        return {"status": "ok", "upstream": None}
+
+    backend = gateway_config.default_backend
+    probe_url = backend.base_url + "/healthz"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(probe_url)
+        if resp.status_code < 500:
+            return {"status": "ok", "default_upstream": backend.base_url}
+        return {
+            "status": "degraded",
+            "warning": f"upstream returned {resp.status_code}",
+            "default_upstream": backend.base_url,
+        }
+    except httpx.RequestError as exc:
+        return {
+            "status": "misconfigured",
+            "warning": str(exc),
+            "default_upstream": backend.base_url,
+        }
+
+
+@app.get("/v1/models")
+async def list_models() -> Response:
+    """Proxy GET /v1/models to the default HTTP backend."""
+    from gateway.backends.http_backend import HttpBackend
+
+    if gateway_config is None or not isinstance(gateway_config.default_backend, HttpBackend):
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+
+    backend = gateway_config.default_backend
+    url = backend.base_url + "/v1/models"
+    try:
+        async with httpx.AsyncClient(timeout=backend.timeout) as client:
+            resp = await client.get(url)
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type=resp.headers.get("content-type", "application/json"),
+        )
+    except httpx.TimeoutException:
+        return JSONResponse(
+            {"error": "upstream_unavailable", "detail": "upstream timed out"},
+            status_code=504,
+        )
+    except httpx.RequestError as exc:
+        return JSONResponse(
+            {"error": "upstream_unavailable", "detail": str(exc)},
+            status_code=502,
+        )
 
 
 @app.get("/metrics")

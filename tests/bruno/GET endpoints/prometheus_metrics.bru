@@ -1,0 +1,37 @@
+meta {
+  name: Prometheus Metrics (:9101)
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{metrics_url}}/metrics
+  body: none
+  auth: none
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("content-type is Prometheus text format", function() {
+    expect(res.headers["content-type"]).to.include("text/plain");
+  });
+
+  test("gateway_requests_total is present", function() {
+    expect(res.body).to.include("gateway_requests_total");
+  });
+
+  test("gateway_active_requests is present", function() {
+    expect(res.body).to.include("gateway_active_requests");
+  });
+
+  test("technique label is present", function() {
+    expect(res.body).to.include('technique="');
+  });
+
+  test("server_profile label is present", function() {
+    expect(res.body).to.include('server_profile="');
+  });
+}
