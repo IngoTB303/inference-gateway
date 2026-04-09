@@ -250,11 +250,11 @@ Client → :8780 (Nginx LB) → :8080 / :8081 (Gateway instances) → Modal vLLM
 ```
 
 ```bash
-# Terminal 1 — gateway instance 1
-PORT=8080 GATEWAY_METRICS_PORT=9101 uv run python main.py
+# Terminal 1 — gateway instance 1 (add API_KEY=your-key to enable auth)
+PORT=8080 GATEWAY_METRICS_PORT=9101 API_KEY=test-key uv run python main.py
 
-# Terminal 2 — gateway instance 2
-PORT=8081 GATEWAY_METRICS_PORT=9102 uv run python main.py
+# Terminal 2 — gateway instance 2 (must use the same API_KEY)
+PORT=8081 GATEWAY_METRICS_PORT=9102 API_KEY=test-key uv run python main.py
 
 # Terminal 3 — Nginx load balancer (rootless, logs to /tmp)
 nginx -p /tmp -c "$(pwd)/nginx-gateway-lb.conf"
@@ -265,18 +265,30 @@ nginx -p /tmp -s stop
 
 All client traffic goes to `:8780`; Nginx round-robins requests between the two gateway instances.
 
+> **Auth note:** Nginx is auth-transparent — it passes the `Authorization` header straight through to the gateway unchanged. If `API_KEY` is set on the gateway instances, every request through the LB must include the header. If `API_KEY` is unset (omit it from the command above), no header is required.
+
 ### Load balancing test scenario
 
 Send 10 requests through the load balancer and verify they are split evenly:
 
 ```bash
-# Send 10 requests through the LB
+# Without auth (API_KEY unset on gateway instances)
 for i in $(seq 10); do
   curl -s -X POST http://127.0.0.1:8780/v1/chat/completions \
     -H 'Content-Type: application/json' \
     -d '{"model":"local","messages":[{"role":"user","content":"hi"}]}' \
     | jq -r .backend
 done
+
+# With auth (API_KEY=test-key set on gateway instances)
+for i in $(seq 10); do
+  curl -s -X POST http://127.0.0.1:8780/v1/chat/completions \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer test-key' \
+    -d '{"model":"local","messages":[{"role":"user","content":"hi"}]}' \
+    | jq -r .backend
+done
+
 # Expected output: alternating "local" entries served by instance 1 and instance 2
 
 # Verify the split — each instance should show ~5 requests
