@@ -307,11 +307,11 @@ def main() -> None:
         except Exception as exc:
             print(f"\nCrew failed: {exc}", file=sys.stderr)
             if _otel_provider is not None:
-                _otel_provider.force_flush()
+                _otel_provider.shutdown()
             sys.exit(1)
 
     if _otel_provider is not None:
-        _otel_provider.force_flush()
+        _otel_provider.shutdown()
 
     print("\n--- Crew output ---")
     print(result)

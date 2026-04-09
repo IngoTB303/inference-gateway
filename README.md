@@ -535,7 +535,7 @@ Open http://localhost:16686, select service `inference-gateway`, and you should 
 **4. Run the crew with tracing:**
 
 ```bash
-OTEL_TRACES_EXPORTER=otlp python crew.py --technique chunked_prefill
+OTEL_TRACES_EXPORTER=otlp uv run --group crew --group otel python crew.py --technique chunked_prefill
 ```
 
 This creates a `crew.run` root span (with `llm.technique=chunked_prefill`) that is the parent of all gateway spans generated during that run.

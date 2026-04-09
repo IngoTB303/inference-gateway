@@ -178,7 +178,7 @@ for profile in "${PROFILES[@]}"; do
 
     if MODEL_NAME="$backend" \
        CREW_VLLM_WAIT_S=0 \
-       uv run --group crew python "$REPO_ROOT/crew.py" \
+       uv run --group crew --group otel python "$REPO_ROOT/crew.py" \
          --topic "$TOPIC" \
          --technique "$technique"; then
       ok=$(( ok + 1 ))
