@@ -1,13 +1,13 @@
 # monitoring/prometheus.yml
 #
 # Scrape targets:
-#   gateway        — Prometheus metrics on GATEWAY_METRICS_PORT (default 9101), served by
-#                    the local gateway process. Docker resolves host.docker.internal → host.
-#
+#   gateway        — instance 1 on GATEWAY_METRICS_PORT 9101 (host)
+#   gateway2       — instance 2 on GATEWAY_METRICS_PORT 9102 (host)
+#   nginx          — nginx-prometheus-exporter sidecar (Docker service)
 #   vllm_standard  — Modal vLLM Gemma4 standard deployment  (server_profile=default)
 #   vllm_optimized — Modal vLLM Gemma4 optimized deployment (server_profile=optimized)
 #
-# Both vLLM targets expose /metrics directly over HTTPS on Modal.
+# Docker resolves host.docker.internal → host machine.
 # Set VLLM_SERVER_PROFILE in .env to label gateway metrics accordingly.
 
 global:
@@ -18,6 +18,16 @@ scrape_configs:
   - job_name: gateway
     static_configs:
       - targets: ["host.docker.internal:9101"]
+    metrics_path: /metrics
+
+  - job_name: gateway2
+    static_configs:
+      - targets: ["host.docker.internal:9102"]
+    metrics_path: /metrics
+
+  - job_name: nginx
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
     metrics_path: /metrics
 
   - job_name: vllm_standard
