@@ -210,7 +210,7 @@ uv run pytest
 uv run pytest tests/test_gateway.py::test_routing_by_model_echo   # single test
 ```
 
-The suite starts real `HTTPServer` instances on free ports and uses [respx](https://lundberg.github.io/respx/) to mock backend `httpx` calls. No running backend is required.
+The suite uses a FastAPI `TestClient` and [respx](https://lundberg.github.io/respx/) to mock backend `httpx` calls. No running backend is required.
 
 **60 tests** covering: GET endpoints, echo shape, request-ID, validation errors (400), auth (401), SSE streaming, backend proxy, response normalization, multi-backend routing, metrics, `latency_ms` in usage, Prometheus counter/histogram/gauge behaviour, `X-Technique` label propagation.
 

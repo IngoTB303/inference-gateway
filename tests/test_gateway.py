@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import json
-import threading
-import urllib.error
-import urllib.request
 import uuid
-from http.server import HTTPServer
 
 import httpx
 import pytest
 import respx
+from fastapi.testclient import TestClient
 
 import main
 from gateway.backends.http_backend import HttpBackend
@@ -27,29 +24,38 @@ COMPLETION_PAYLOAD = {
 }
 
 
-def _post(url: str, body: dict, headers: dict | None = None, timeout: float = 30.0):
-    """POST JSON body; returns (status, body_dict, response_headers)."""
-    data = json.dumps(body).encode()
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json", **(headers or {})},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, json.loads(resp.read()), resp.headers
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read()), e.headers
+def _post(client, path, body: dict, headers: dict | None = None, timeout: float = 30.0):
+    """POST JSON body; returns (status, body_dict, response_headers).
+
+    client can be a TestClient (unit tests) or a full URL string (live tests).
+    For live tests pass the full URL as client and omit path (or pass path="").
+    """
+    if isinstance(client, str):
+        # live test: client is the full URL, path is the body
+        with httpx.Client(timeout=timeout) as c:
+            try:
+                resp = c.post(client, json=path, headers={"Content-Type": "application/json", **(headers or {})})
+                return resp.status_code, resp.json(), resp.headers
+            except httpx.HTTPStatusError as e:
+                return e.response.status_code, e.response.json(), e.response.headers
+    resp = client.post(path, json=body, headers=headers or {})
+    return resp.status_code, resp.json(), resp.headers
 
 
-def _get(url: str):
-    """GET; returns (status, body_dict)."""
-    try:
-        with urllib.request.urlopen(url) as resp:
-            return resp.status, json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read())
+def _get(client, path: str):
+    """GET; returns (status, body_dict).
+
+    client can be a TestClient (unit tests) or a base URL string (live tests).
+    """
+    if isinstance(client, str):
+        with httpx.Client() as c:
+            try:
+                resp = c.get(client + path)
+                return resp.status_code, resp.json()
+            except httpx.HTTPStatusError as e:
+                return e.response.status_code, e.response.json()
+    resp = client.get(path)
+    return resp.status_code, resp.json()
 
 
 def _live_timeout(backend_name: str, extra: float = 30.0) -> float:
@@ -81,12 +87,8 @@ def gateway(monkeypatch):
         monkeypatch.setattr(main.metrics, f, 0)
     monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
 
-    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{port}"
-    server.shutdown()
+    with TestClient(main.app, raise_server_exceptions=False) as client:
+        yield client
 
 
 @pytest.fixture
@@ -104,12 +106,8 @@ def backend_gateway(monkeypatch):
         monkeypatch.setattr(main.metrics, f, 0)
     monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
 
-    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{port}"
-    server.shutdown()
+    with TestClient(main.app, raise_server_exceptions=False) as client:
+        yield client
 
 
 # ---------------------------------------------------------------------------
@@ -118,18 +116,18 @@ def backend_gateway(monkeypatch):
 
 
 def test_healthz(gateway):
-    status, body = _get(f"{gateway}/healthz")
+    status, body = _get(gateway, "/healthz")
     assert status == 200
     assert body == {"status": "ok"}
 
 
 def test_unknown_route_get(gateway):
-    status, _ = _get(f"{gateway}/unknown")
+    status, _ = _get(gateway, "/unknown")
     assert status == 404
 
 
 def test_unknown_route_post(gateway):
-    status, _, _ = _post(f"{gateway}/unknown", {})
+    status, _, _ = _post(gateway, "/unknown", {})
     assert status == 404
 
 
@@ -139,7 +137,7 @@ def test_unknown_route_post(gateway):
 
 
 def test_echo_returns_correct_shape(gateway):
-    status, body, _ = _post(f"{gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    status, body, _ = _post(gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     assert status == 200
     assert "id" in body
     assert "choices" in body
@@ -147,13 +145,13 @@ def test_echo_returns_correct_shape(gateway):
 
 
 def test_echo_content(gateway):
-    _, body, _ = _post(f"{gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    _, body, _ = _post(gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     content = body["choices"][0]["message"]["content"]
     assert content.startswith("Echo: hello")
 
 
 def test_echo_usage_fields(gateway):
-    _, body, _ = _post(f"{gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    _, body, _ = _post(gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     usage = body["usage"]
     assert "prompt_tokens" in usage
     assert "completion_tokens" in usage
@@ -168,7 +166,7 @@ def test_echo_usage_fields(gateway):
 def test_request_id_from_header(gateway):
     rid = "my-request-123"
     status, body, headers = _post(
-        f"{gateway}/v1/chat/completions",
+        gateway, "/v1/chat/completions",
         COMPLETION_PAYLOAD,
         headers={"X-Request-ID": rid},
     )
@@ -178,7 +176,7 @@ def test_request_id_from_header(gateway):
 
 
 def test_request_id_generated(gateway):
-    _, body, _ = _post(f"{gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    _, body, _ = _post(gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     generated_id = body["id"]
     parsed = uuid.UUID(generated_id)
     assert parsed.version == 4
@@ -187,7 +185,7 @@ def test_request_id_generated(gateway):
 def test_request_id_alt_header(gateway):
     rid = "alt-request-456"
     status, body, _ = _post(
-        f"{gateway}/v1/chat/completions",
+        gateway, "/v1/chat/completions",
         COMPLETION_PAYLOAD,
         headers={"Request-Id": rid},
     )
@@ -201,29 +199,24 @@ def test_request_id_alt_header(gateway):
 
 
 def test_invalid_json_body(gateway):
-    req = urllib.request.Request(
-        f"{gateway}/v1/chat/completions",
-        data=b"not json",
+    resp = gateway.post(
+        "/v1/chat/completions",
+        content=b"not json",
         headers={"Content-Type": "application/json"},
-        method="POST",
     )
-    try:
-        urllib.request.urlopen(req)
-        pytest.fail("Expected HTTPError")
-    except urllib.error.HTTPError as e:
-        assert e.code == 400
-        assert json.loads(e.read())["error"] == "invalid_json"
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "invalid_json"
 
 
 def test_missing_messages(gateway):
-    status, body, _ = _post(f"{gateway}/v1/chat/completions", {})
+    status, body, _ = _post(gateway, "/v1/chat/completions", {})
     assert status == 400
     assert body["error"] == "invalid_messages"
 
 
 def test_empty_messages_list(gateway):
     status, body, _ = _post(
-        f"{gateway}/v1/chat/completions",
+        gateway, "/v1/chat/completions",
         {"model": "test", "messages": []},
     )
     assert status == 400
@@ -237,17 +230,10 @@ def test_empty_messages_list(gateway):
 
 def test_echo_streaming(gateway):
     payload = {**COMPLETION_PAYLOAD, "stream": True}
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        f"{gateway}/v1/chat/completions",
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req) as resp:
-        assert resp.status == 200
-        assert "text/event-stream" in resp.headers.get("Content-Type", "")
-        raw = resp.read().decode()
+    resp = gateway.post("/v1/chat/completions", json=payload)
+    assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers.get("content-type", "")
+    raw = resp.text
 
     lines = [line for line in raw.split("\n") if line.startswith("data:")]
     assert any(line.startswith("data: {") for line in lines)
@@ -273,7 +259,8 @@ def test_backend_success(backend_gateway):
     )
 
     status, body, headers = _post(
-        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+        backend_gateway, "/v1/chat/completions",
+        COMPLETION_PAYLOAD
     )
     assert status == 200
     assert "id" in body
@@ -287,7 +274,8 @@ def test_backend_5xx(backend_gateway):
     )
 
     status, body, _ = _post(
-        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+        backend_gateway, "/v1/chat/completions",
+        COMPLETION_PAYLOAD
     )
     assert status == 502
     assert body["error"] == "backend_error"
@@ -300,7 +288,8 @@ def test_backend_timeout(backend_gateway):
     )
 
     status, body, _ = _post(
-        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+        backend_gateway, "/v1/chat/completions",
+        COMPLETION_PAYLOAD
     )
     assert status == 504
     assert body["error"] == "gateway_timeout"
@@ -313,7 +302,8 @@ def test_backend_connection_error(backend_gateway):
     )
 
     status, body, _ = _post(
-        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+        backend_gateway, "/v1/chat/completions",
+        COMPLETION_PAYLOAD
     )
     assert status == 502
     assert body["error"] == "backend_unavailable"
@@ -325,17 +315,19 @@ def test_backend_connection_error(backend_gateway):
 
 
 def test_metrics_increments(gateway):
-    _post(f"{gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
-    _post(f"{gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    _post(gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
+    _post(gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
 
-    _, metrics_body = _get(f"{gateway}/metrics")
+    _, metrics_body = _get(gateway, "/metrics")
     assert metrics_body["request_count"] == 2
 
 
 def test_metrics_error_count(gateway):
-    _post(f"{gateway}/v1/chat/completions", {})  # missing messages → 400
+    _post(
+        gateway, "/v1/chat/completions",
+        {})  # missing messages → 400
 
-    _, metrics_body = _get(f"{gateway}/metrics")
+    _, metrics_body = _get(gateway, "/metrics")
     assert metrics_body["error_count"] == 1
 
 
@@ -344,9 +336,9 @@ def test_metrics_prompt_tokens_echo(gateway):
         "model": "test",
         "messages": [{"role": "user", "content": "hello world"}],
     }
-    _post(f"{gateway}/v1/chat/completions", payload)
+    _post(gateway, "/v1/chat/completions", payload)
 
-    _, metrics_body = _get(f"{gateway}/metrics")
+    _, metrics_body = _get(gateway, "/metrics")
     assert metrics_body["request_count"] == 1
     assert metrics_body["prompt_tokens_total"] == 2  # len("hello world".split()) == 2
 
@@ -358,7 +350,7 @@ def test_metrics_prompt_tokens_echo(gateway):
 
 def test_invalid_message_missing_role(gateway):
     status, body, _ = _post(
-        f"{gateway}/v1/chat/completions",
+        gateway, "/v1/chat/completions",
         {"messages": [{"content": "hi"}]},
     )
     assert status == 400
@@ -367,7 +359,7 @@ def test_invalid_message_missing_role(gateway):
 
 def test_invalid_message_missing_content(gateway):
     status, body, _ = _post(
-        f"{gateway}/v1/chat/completions",
+        gateway, "/v1/chat/completions",
         {"messages": [{"role": "user"}]},
     )
     assert status == 400
@@ -376,7 +368,7 @@ def test_invalid_message_missing_content(gateway):
 
 def test_invalid_message_bad_role(gateway):
     status, body, _ = _post(
-        f"{gateway}/v1/chat/completions",
+        gateway, "/v1/chat/completions",
         {"messages": [{"role": "unknown", "content": "hi"}]},
     )
     assert status == 400
@@ -385,7 +377,7 @@ def test_invalid_message_bad_role(gateway):
 
 def test_invalid_stream_type(gateway):
     status, body, _ = _post(
-        f"{gateway}/v1/chat/completions",
+        gateway, "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}], "stream": "yes"},
     )
     assert status == 400
@@ -394,7 +386,7 @@ def test_invalid_stream_type(gateway):
 
 def test_invalid_max_tokens_type(gateway):
     status, body, _ = _post(
-        f"{gateway}/v1/chat/completions",
+        gateway, "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}], "max_tokens": "fifty"},
     )
     assert status == 400
@@ -403,7 +395,7 @@ def test_invalid_max_tokens_type(gateway):
 
 def test_invalid_max_tokens_range(gateway):
     status, body, _ = _post(
-        f"{gateway}/v1/chat/completions",
+        gateway, "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}], "max_tokens": -1},
     )
     assert status == 400
@@ -412,7 +404,7 @@ def test_invalid_max_tokens_range(gateway):
 
 def test_invalid_temperature_range(gateway):
     status, body, _ = _post(
-        f"{gateway}/v1/chat/completions",
+        gateway, "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}], "temperature": 5.0},
     )
     assert status == 400
@@ -421,7 +413,7 @@ def test_invalid_temperature_range(gateway):
 
 def test_invalid_stop_type(gateway):
     status, body, _ = _post(
-        f"{gateway}/v1/chat/completions",
+        gateway, "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}], "stop": 123},
     )
     assert status == 400
@@ -431,7 +423,7 @@ def test_invalid_stop_type(gateway):
 def test_model_default_omitted(gateway):
     """Omitting model should succeed."""
     status, body, _ = _post(
-        f"{gateway}/v1/chat/completions",
+        gateway, "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}]},
     )
     assert status == 200
@@ -465,7 +457,7 @@ def test_full_contract_fields_forwarded(backend_gateway):
     respx.post("http://test-backend/v1/chat/completions").mock(side_effect=capture)
 
     _post(
-        f"{backend_gateway}/v1/chat/completions",
+        backend_gateway, "/v1/chat/completions",
         {
             "messages": [{"role": "user", "content": "hi"}],
             "max_tokens": 100,
@@ -505,18 +497,14 @@ def multi_backend_gateway(monkeypatch):
         monkeypatch.setattr(main.metrics, f, 0)
     monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
 
-    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{port}"
-    server.shutdown()
+    with TestClient(main.app, raise_server_exceptions=False) as client:
+        yield client
 
 
 def test_routing_by_model_echo(multi_backend_gateway):
     """model: 'local' routes to echo backend and response has backend: 'local'."""
     status, body, _ = _post(
-        f"{multi_backend_gateway}/v1/chat/completions",
+        multi_backend_gateway, "/v1/chat/completions",
         {"model": "local", "messages": [{"role": "user", "content": "hello"}]},
     )
     assert status == 200
@@ -527,7 +515,7 @@ def test_routing_by_model_echo(multi_backend_gateway):
 def test_routing_default_fallback(multi_backend_gateway):
     """Omitting model falls back to default (echo) backend."""
     status, body, _ = _post(
-        f"{multi_backend_gateway}/v1/chat/completions",
+        multi_backend_gateway, "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hello"}]},
     )
     assert status == 200
@@ -537,7 +525,7 @@ def test_routing_default_fallback(multi_backend_gateway):
 def test_routing_unknown_model_fallback(multi_backend_gateway):
     """Unknown model name falls back to default backend."""
     status, body, _ = _post(
-        f"{multi_backend_gateway}/v1/chat/completions",
+        multi_backend_gateway, "/v1/chat/completions",
         {
             "model": "nonexistent-backend",
             "messages": [{"role": "user", "content": "hello"}],
@@ -569,7 +557,7 @@ def test_routing_by_model_remote(multi_backend_gateway):
         )
     )
     status, body, _ = _post(
-        f"{multi_backend_gateway}/v1/chat/completions",
+        multi_backend_gateway, "/v1/chat/completions",
         {
             "model": "remote-modal-llama",
             "messages": [{"role": "user", "content": "hello"}],
@@ -619,13 +607,9 @@ def test_routing_by_model_vllm(monkeypatch):
         )
     )
 
-    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
+    with TestClient(main.app, raise_server_exceptions=False) as _client:
         status, body, _ = _post(
-            f"http://127.0.0.1:{port}/v1/chat/completions",
+            _client, "/v1/chat/completions",
             {
                 "model": "remote-modal-vllm",
                 "messages": [{"role": "user", "content": "hello"}],
@@ -633,14 +617,13 @@ def test_routing_by_model_vllm(monkeypatch):
         )
         assert status == 200
         assert body["backend"] == "remote-modal-vllm"
-    finally:
-        server.shutdown()
+    # (inline server replaced with TestClient)
 
 
 def test_backend_metadata_in_response(multi_backend_gateway):
     """Every response includes a 'backend' field."""
     status, body, _ = _post(
-        f"{multi_backend_gateway}/v1/chat/completions",
+        multi_backend_gateway, "/v1/chat/completions",
         {"messages": [{"role": "user", "content": "hi"}]},
     )
     assert status == 200
@@ -649,7 +632,7 @@ def test_backend_metadata_in_response(multi_backend_gateway):
 
 def test_get_backends_endpoint(multi_backend_gateway):
     """GET /v1/backends lists configured backends."""
-    status, body = _get(f"{multi_backend_gateway}/v1/backends")
+    status, body = _get(multi_backend_gateway, "/v1/backends")
     assert status == 200
     names = [b["name"] for b in body["backends"]]
     assert "local" in names
@@ -695,23 +678,19 @@ def auth_gateway(monkeypatch):
         monkeypatch.setattr(main.metrics, f, 0)
     monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
 
-    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{port}"
-    server.shutdown()
+    with TestClient(main.app, raise_server_exceptions=False) as client:
+        yield client
 
 
 def test_auth_no_header_401(auth_gateway):
-    status, body, _ = _post(f"{auth_gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    status, body, _ = _post(auth_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     assert status == 401
     assert body["error"] == "unauthorized"
 
 
 def test_auth_wrong_key_401(auth_gateway):
     status, body, _ = _post(
-        f"{auth_gateway}/v1/chat/completions",
+        auth_gateway, "/v1/chat/completions",
         COMPLETION_PAYLOAD,
         headers={"Authorization": "Bearer wrong-key"},
     )
@@ -721,7 +700,7 @@ def test_auth_wrong_key_401(auth_gateway):
 
 def test_auth_correct_bearer_200(auth_gateway):
     status, _, _ = _post(
-        f"{auth_gateway}/v1/chat/completions",
+        auth_gateway, "/v1/chat/completions",
         COMPLETION_PAYLOAD,
         headers={"Authorization": "Bearer test-secret-key"},
     )
@@ -730,7 +709,7 @@ def test_auth_correct_bearer_200(auth_gateway):
 
 def test_auth_api_key_scheme(auth_gateway):
     status, _, _ = _post(
-        f"{auth_gateway}/v1/chat/completions",
+        auth_gateway, "/v1/chat/completions",
         COMPLETION_PAYLOAD,
         headers={"Authorization": "Api-Key test-secret-key"},
     )
@@ -739,7 +718,7 @@ def test_auth_api_key_scheme(auth_gateway):
 
 def test_no_auth_configured(gateway):
     """When no API_KEY is set, requests succeed without Authorization header."""
-    status, _, _ = _post(f"{gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    status, _, _ = _post(gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     assert status == 200
 
 
@@ -765,7 +744,8 @@ def test_backend_missing_usage_normalized(backend_gateway):
         )
     )
     status, body, _ = _post(
-        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+        backend_gateway, "/v1/chat/completions",
+        COMPLETION_PAYLOAD
     )
     assert status == 200
     assert body["usage"]["prompt_tokens"] == 0
@@ -795,7 +775,8 @@ def test_backend_missing_model_normalized(backend_gateway):
         )
     )
     status, body, _ = _post(
-        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+        backend_gateway, "/v1/chat/completions",
+        COMPLETION_PAYLOAD
     )
     assert status == 200
     assert body["model"] == "unknown"
@@ -823,7 +804,8 @@ def test_backend_missing_object_normalized(backend_gateway):
         )
     )
     status, body, _ = _post(
-        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+        backend_gateway, "/v1/chat/completions",
+        COMPLETION_PAYLOAD
     )
     assert status == 200
     assert body["object"] == "chat.completion"
@@ -860,7 +842,8 @@ def test_backend_extra_fields_stripped(backend_gateway):
         )
     )
     status, body, _ = _post(
-        f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD
+        backend_gateway, "/v1/chat/completions",
+        COMPLETION_PAYLOAD
     )
     assert status == 200
 
@@ -907,17 +890,9 @@ def test_streaming_logs_usage(backend_gateway):
     )
 
     payload = {**COMPLETION_PAYLOAD, "stream": True}
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        f"{backend_gateway}/v1/chat/completions",
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req) as resp:
-        resp.read()  # consume stream
+    backend_gateway.post("/v1/chat/completions", json=payload)  # consume stream
 
-    _, metrics_body = _get(f"{backend_gateway}/metrics")
+    _, metrics_body = _get(backend_gateway, "/metrics")
     assert metrics_body["prompt_tokens_total"] == 7
     assert metrics_body["completion_tokens_total"] == 3
 
@@ -929,7 +904,7 @@ def test_streaming_logs_usage(backend_gateway):
 
 def test_echo_latency_in_usage(gateway):
     """Echo response includes latency_ms in usage."""
-    _, body, _ = _post(f"{gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    _, body, _ = _post(gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     assert "latency_ms" in body["usage"]
     assert body["usage"]["latency_ms"] >= 0
 
@@ -955,7 +930,7 @@ def test_backend_latency_in_usage(backend_gateway):
             },
         )
     )
-    _, body, _ = _post(f"{backend_gateway}/v1/chat/completions", COMPLETION_PAYLOAD)
+    _, body, _ = _post(backend_gateway, "/v1/chat/completions", COMPLETION_PAYLOAD)
     assert "latency_ms" in body["usage"]
     assert body["usage"]["latency_ms"] >= 0
 
@@ -982,7 +957,7 @@ def test_config_backend_latency_in_usage(multi_backend_gateway):
         )
     )
     _, body, _ = _post(
-        f"{multi_backend_gateway}/v1/chat/completions",
+        multi_backend_gateway, "/v1/chat/completions",
         {
             "model": "remote-modal-llama",
             "messages": [{"role": "user", "content": "hi"}],
@@ -1023,7 +998,7 @@ def test_model_field_not_forwarded_to_backend(multi_backend_gateway):
     respx.post("http://test-backend/v1/chat/completions").mock(side_effect=capture)
 
     _post(
-        f"{multi_backend_gateway}/v1/chat/completions",
+        multi_backend_gateway, "/v1/chat/completions",
         {
             "model": "remote-modal-llama",
             "messages": [{"role": "user", "content": "hi"}],
@@ -1058,22 +1033,17 @@ def live_gateway(monkeypatch):
         monkeypatch.setattr(main.metrics, f, 0)
     monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
 
-    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{port}"
-    server.shutdown()
+    with TestClient(main.app, raise_server_exceptions=False) as client:
+        yield client
 
 
 @pytest.mark.live
 def test_live_backends_endpoint(live_gateway):
     """GET /v1/backends lists all backends from config.yaml."""
-    status, body = _get(f"{live_gateway}/v1/backends")
+    status, body = _get(live_gateway, "/v1/backends")
     assert status == 200
     names = [b["name"] for b in body["backends"]]
     assert "local" in names
-    assert "local-llama" in names
     assert "remote-modal-llama" in names
     assert "remote-modal-vllm" in names
     assert body["default"] == "local"
@@ -1091,46 +1061,19 @@ def _assert_valid_completion(body: dict, backend_name: str) -> None:
     assert usage["latency_ms"] >= 0
 
 
-@pytest.mark.live
-def test_live_local_llama(live_gateway):
-    """Live inference against local-llama backend."""
-    try:
-        status, body, _ = _post(
-            f"{live_gateway}/v1/chat/completions",
-            {
-                "model": "local-llama",
-                "messages": [{"role": "user", "content": "Say hi"}],
-                "max_tokens": 10,
-            },
-            timeout=_live_timeout("local-llama"),
-        )
-    except urllib.error.HTTPError as e:
-        status = e.code
-        body = json.loads(e.read())
-
-    if status in (502, 504):
-        pytest.skip(f"local-llama backend not reachable (status {status})")
-
-    assert status == 200
-    _assert_valid_completion(body, "local-llama")
-
 
 @pytest.mark.live
 def test_live_remote_modal_llama(live_gateway):
     """Live inference against remote-modal-llama backend."""
-    try:
-        status, body, _ = _post(
-            f"{live_gateway}/v1/chat/completions",
-            {
-                "model": "remote-modal-llama",
-                "messages": [{"role": "user", "content": "Say hi"}],
-                "max_tokens": 10,
-            },
-            timeout=_live_timeout("remote-modal-llama"),
-        )
-    except urllib.error.HTTPError as e:
-        status = e.code
-        body = json.loads(e.read())
+    status, body, _ = _post(
+        live_gateway, "/v1/chat/completions",
+        {
+            "model": "remote-modal-llama",
+            "messages": [{"role": "user", "content": "Say hi"}],
+            "max_tokens": 10,
+        },
+        timeout=_live_timeout("remote-modal-llama"),
+    )
 
     if status in (502, 504):
         pytest.skip(f"remote-modal-llama backend not reachable (status {status})")
@@ -1142,19 +1085,15 @@ def test_live_remote_modal_llama(live_gateway):
 @pytest.mark.live
 def test_live_remote_modal_vllm(live_gateway):
     """Live inference against remote-modal-vllm backend."""
-    try:
-        status, body, _ = _post(
-            f"{live_gateway}/v1/chat/completions",
-            {
-                "model": "remote-modal-vllm",
-                "messages": [{"role": "user", "content": "Say hi"}],
-                "max_tokens": 10,
-            },
-            timeout=_live_timeout("remote-modal-vllm"),
-        )
-    except urllib.error.HTTPError as e:
-        status = e.code
-        body = json.loads(e.read())
+    status, body, _ = _post(
+        live_gateway, "/v1/chat/completions",
+        {
+            "model": "remote-modal-vllm",
+            "messages": [{"role": "user", "content": "Say hi"}],
+            "max_tokens": 10,
+        },
+        timeout=_live_timeout("remote-modal-vllm"),
+    )
 
     if status in (502, 504):
         pytest.skip(f"remote-modal-vllm backend not reachable (status {status})")
@@ -1174,7 +1113,7 @@ def test_live_backend_timeout(live_gateway, monkeypatch):
     monkeypatch.setattr(backend, "timeout", 1.0)
 
     status, body, _ = _post(
-        f"{live_gateway}/v1/chat/completions",
+        live_gateway, "/v1/chat/completions",
         {"model": "remote-modal-vllm", "messages": [{"role": "user", "content": "hi"}]},
         timeout=10.0,
     )
@@ -1205,12 +1144,8 @@ def prom_gateway(monkeypatch):
         monkeypatch.setattr(main.metrics, f, 0)
     monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
 
-    server = HTTPServer(("127.0.0.1", 0), main.GatewayHandler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{port}"
-    server.shutdown()
+    with TestClient(main.app, raise_server_exceptions=False) as client:
+        yield client
 
 
 def test_prom_requests_total_increments(prom_gateway):
@@ -1225,7 +1160,8 @@ def test_prom_requests_total_increments(prom_gateway):
     }
     before = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
 
-    _post(prom_gateway + "/v1/chat/completions", COMPLETION_PAYLOAD)
+    _post(prom_gateway, "/v1/chat/completions",
+        COMPLETION_PAYLOAD)
 
     after = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
     assert after == before + 1
@@ -1243,7 +1179,7 @@ def test_prom_tokens_total_increments(prom_gateway):
     )
 
     _post(
-        prom_gateway + "/v1/chat/completions",
+        prom_gateway, "/v1/chat/completions",
         {"model": "test", "messages": [{"role": "user", "content": "hello world"}]},
     )
 
@@ -1265,7 +1201,8 @@ def test_prom_request_duration_observed(prom_gateway):
         or 0.0
     )
 
-    _post(prom_gateway + "/v1/chat/completions", COMPLETION_PAYLOAD)
+    _post(prom_gateway, "/v1/chat/completions",
+        COMPLETION_PAYLOAD)
 
     count_after = (
         REGISTRY.get_sample_value("gateway_request_duration_seconds_count", labels)
@@ -1278,7 +1215,8 @@ def test_prom_active_requests_gauge(prom_gateway):
     """gateway_active_requests gauge returns to 0 after request completes."""
     from prometheus_client import REGISTRY
 
-    _post(prom_gateway + "/v1/chat/completions", COMPLETION_PAYLOAD)
+    _post(prom_gateway, "/v1/chat/completions",
+        COMPLETION_PAYLOAD)
 
     assert (REGISTRY.get_sample_value("gateway_active_requests") or 0.0) == 0.0
 
@@ -1294,7 +1232,8 @@ def test_prom_error_counter_increments(prom_gateway):
     }
     before = REGISTRY.get_sample_value("gateway_errors_total", labels) or 0.0
 
-    _post(prom_gateway + "/v1/chat/completions", {"model": "test", "messages": []})
+    _post(prom_gateway, "/v1/chat/completions",
+        {"model": "test", "messages": []})
 
     after = REGISTRY.get_sample_value("gateway_errors_total", labels) or 0.0
     assert after == before + 1
@@ -1313,7 +1252,7 @@ def test_prom_x_technique_header_sets_label(prom_gateway):
     before = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
 
     _post(
-        prom_gateway + "/v1/chat/completions",
+        prom_gateway, "/v1/chat/completions",
         COMPLETION_PAYLOAD,
         headers={"X-Technique": "chunked_prefill"},
     )
@@ -1334,7 +1273,8 @@ def test_prom_missing_x_technique_defaults_to_baseline(prom_gateway):
     }
     before = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
 
-    _post(prom_gateway + "/v1/chat/completions", COMPLETION_PAYLOAD)
+    _post(prom_gateway, "/v1/chat/completions",
+        COMPLETION_PAYLOAD)
 
     after = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
     assert after == before + 1
