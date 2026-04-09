@@ -1,0 +1,55 @@
+meta {
+  name: LB → Chat Completion (load balancing test)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{lb_url}}/v1/chat/completions
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "model": "local",
+    "messages": [{"role": "user", "content": "hello via load balancer"}]
+  }
+}
+
+docs {
+  Routes a chat completion through Nginx :8780 to one of the gateway instances.
+
+  Load balancing test: run this request multiple times (or use Bruno's
+  collection runner) and compare gateway_requests_total on :9101 vs :9102 —
+  each instance should receive roughly half the requests.
+
+    curl -s http://localhost:9101/metrics | grep gateway_requests_total
+    curl -s http://localhost:9102/metrics | grep gateway_requests_total
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("response has id field", function() {
+    expect(res.body).to.have.property("id");
+  });
+
+  test("response has choices", function() {
+    expect(res.body.choices).to.be.an("array").with.length.greaterThan(0);
+  });
+
+  test("content starts with Echo:", function() {
+    expect(res.body.choices[0].message.content).to.include("Echo:");
+  });
+
+  test("response has backend field", function() {
+    expect(res.body).to.have.property("backend");
+  });
+
+  test("usage includes latency_ms", function() {
+    expect(res.body.usage).to.have.property("latency_ms");
+  });
+}
