@@ -78,7 +78,7 @@ Streaming (`stream: true`) uses Server-Sent Events: `data: {...}\n\n` chunks end
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/v1/chat/completions` | Main inference endpoint |
-| `GET` | `/healthz` | Health check |
+| `GET` | `/health` | Health check |
 | `GET` | `/v1/backends` | List configured backends and default |
 | `GET` | `/metrics` | Prometheus-style or OTLP metrics (advanced) |
 

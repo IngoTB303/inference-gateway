@@ -80,8 +80,7 @@ default_backend: local
 | `POST` | `/v1/chat/completions` | Main inference endpoint |
 | `GET` | `/v1/models` | Proxy to the default HTTP backend's `/v1/models` |
 | `GET` | `/v1/backends` | List configured backends and default |
-| `GET` | `/healthz` | Liveness probe |
-| `GET` | `/health` | Extended health check with upstream probe |
+| `GET` | `/health` | Health check with upstream probe |
 | `GET` | `/metrics` | Legacy JSON counters (request count, latency, tokens) |
 | `GET` | `:9101/metrics` | Prometheus-format metrics (dedicated scrape port) |
 
@@ -176,8 +175,8 @@ curl http://localhost:8080/v1/backends
 ### Health check
 
 ```bash
-curl http://localhost:8080/healthz
-# → {"status": "ok"}
+curl http://localhost:8080/health
+# → {"status": "ok", "upstream": null}
 ```
 
 ### Metrics

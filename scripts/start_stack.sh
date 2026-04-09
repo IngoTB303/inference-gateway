@@ -102,8 +102,8 @@ echo "Waiting for gateways to start..."
 deadline=$(( $(date +%s) + 30 ))
 while true; do
   gw1_ok=false; gw2_ok=false
-  curl -sf "http://localhost:$PORT1/healthz" -o /dev/null 2>/dev/null && gw1_ok=true
-  curl -sf "http://localhost:$PORT2/healthz" -o /dev/null 2>/dev/null && gw2_ok=true
+  curl -sf "http://localhost:$PORT1/health" -o /dev/null 2>/dev/null && gw1_ok=true
+  curl -sf "http://localhost:$PORT2/health" -o /dev/null 2>/dev/null && gw2_ok=true
   $gw1_ok && $gw2_ok && break
   if [[ $(date +%s) -ge $deadline ]]; then
     echo "Gateways did not start in 30s. Check $LOG_GW1 and $LOG_GW2." >&2

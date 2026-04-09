@@ -119,12 +119,6 @@ def backend_gateway(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_healthz(gateway):
-    status, body = _get(gateway, "/healthz")
-    assert status == 200
-    assert body == {"status": "ok"}
-
-
 def test_root_endpoint(gateway):
     status, body = _get(gateway, "/")
     assert status == 200
