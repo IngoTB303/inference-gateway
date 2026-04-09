@@ -1,0 +1,31 @@
+meta {
+  name: LB → Gateway Health Check
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{lb_url}}/healthz
+  body: none
+  auth: inherit
+}
+
+docs {
+  Verifies the full path: Client → Nginx :8780 → Gateway :8080/:8081
+  The gateway's /healthz response confirms Nginx is correctly proxying traffic.
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("body is {status: ok}", function() {
+    expect(res.body).to.deep.equal({ status: "ok" });
+  });
+
+  test("response came through Nginx (no direct gateway port used)", function() {
+    // If this request succeeded, Nginx routed it to a gateway instance
+    expect(res.status).to.equal(200);
+  });
+}

@@ -1,0 +1,50 @@
+meta {
+  name: Nginx stub_status
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{lb_url}}/nginx_status
+  body: none
+  auth: none
+}
+
+docs {
+  Nginx stub_status endpoint — scraped by nginx-prometheus-exporter in Docker.
+  Returns plain-text connection stats, not JSON.
+
+  Example response:
+    Active connections: 5
+    server accepts handled requests
+     5 5 5
+    Reading: 0 Writing: 1 Waiting: 4
+
+  Notes:
+  - accepts = handled = requests means no dropped connections (healthy)
+  - Waiting > 0 is normal: these are HTTP keep-alive connections held open
+    by Nginx after a request, waiting for potential follow-up requests.
+    They expire after Nginx's keepalive_timeout (default 65s) and drop to 0.
+  - The tests below check field names only, not values, so they remain
+    stable across multiple runs.
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("response contains Active connections", function() {
+    expect(res.body).to.include("Active connections");
+  });
+
+  test("response contains server accepts handled requests", function() {
+    expect(res.body).to.include("server accepts handled requests");
+  });
+
+  test("response contains Reading/Writing/Waiting stats", function() {
+    expect(res.body).to.include("Reading:");
+    expect(res.body).to.include("Writing:");
+    expect(res.body).to.include("Waiting:");
+  });
+}

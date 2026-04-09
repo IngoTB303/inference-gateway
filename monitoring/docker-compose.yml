@@ -1,6 +1,9 @@
 # Run from this directory:  docker compose up -d
-# Prometheus scrapes the gateway (:9101) and vLLM (:8000) on your host via host.docker.internal
-# (Linux: extra_hosts below maps host.docker.internal → host gateway).
+#
+# Services:
+#   prometheus        — scrapes gateway1 (:9101), gateway2 (:9102), nginx-exporter, vLLM Modal
+#   grafana           — dashboards at http://localhost:3000 (admin / admin)
+#   nginx-exporter    — converts Nginx stub_status → Prometheus metrics on :9113
 
 services:
   prometheus:
@@ -28,3 +31,12 @@ services:
       - ./grafana_dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    command:
+      - -nginx.scrape-uri=http://host.docker.internal:8780/nginx_status
+    ports:
+      - "9113:9113"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

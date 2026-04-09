@@ -1346,3 +1346,80 @@ def test_prom_missing_x_technique_defaults_to_baseline(prom_gateway):
 
     after = REGISTRY.get_sample_value("gateway_requests_total", labels) or 0.0
     assert after == before + 1
+
+
+# ---------------------------------------------------------------------------
+# Nginx load balancer config (#14)
+# ---------------------------------------------------------------------------
+
+
+def test_nginx_config_exists():
+    """nginx-gateway-lb.conf is present in the project root."""
+    from pathlib import Path
+
+    conf = Path("nginx-gateway-lb.conf")
+    assert conf.exists(), "nginx-gateway-lb.conf not found in project root"
+
+
+def test_nginx_config_upstream_ports():
+    """nginx-gateway-lb.conf defines upstreams on :8080 and :8081."""
+    content = open("nginx-gateway-lb.conf").read()
+    assert "127.0.0.1:8080" in content, "upstream :8080 missing"
+    assert "127.0.0.1:8081" in content, "upstream :8081 missing"
+
+
+def test_nginx_config_listen_port():
+    """nginx-gateway-lb.conf listens on port 8780."""
+    content = open("nginx-gateway-lb.conf").read()
+    assert "listen 8780" in content
+
+
+def test_nginx_config_sse_buffering_off():
+    """nginx-gateway-lb.conf disables proxy buffering (required for SSE)."""
+    content = open("nginx-gateway-lb.conf").read()
+    assert "proxy_buffering" in content and "off" in content
+
+
+def test_nginx_config_stub_status():
+    """nginx-gateway-lb.conf exposes /nginx_status for Prometheus exporter."""
+    content = open("nginx-gateway-lb.conf").read()
+    assert "stub_status" in content
+    assert "/nginx_status" in content
+
+
+def test_nginx_config_rootless():
+    """nginx-gateway-lb.conf uses /tmp paths so it runs without root."""
+    content = open("nginx-gateway-lb.conf").read()
+    assert "/tmp/" in content
+
+
+def test_prometheus_config_scrapes_both_gateways():
+    """prometheus.yml defines scrape jobs for both gateway instances."""
+    import yaml
+
+    with open("monitoring/prometheus.yml") as f:
+        cfg = yaml.safe_load(f)
+    jobs = {job["job_name"] for job in cfg["scrape_configs"]}
+    assert "gateway" in jobs, "gateway job missing"
+    assert "gateway2" in jobs, "gateway2 job missing"
+
+
+def test_prometheus_config_scrapes_nginx():
+    """prometheus.yml defines a scrape job for the nginx exporter."""
+    import yaml
+
+    with open("monitoring/prometheus.yml") as f:
+        cfg = yaml.safe_load(f)
+    jobs = {job["job_name"] for job in cfg["scrape_configs"]}
+    assert "nginx" in jobs, "nginx exporter job missing"
+
+
+def test_docker_compose_nginx_exporter():
+    """monitoring/docker-compose.yml includes the nginx-prometheus-exporter service."""
+    import yaml
+
+    with open("monitoring/docker-compose.yml") as f:
+        cfg = yaml.safe_load(f)
+    assert "nginx-exporter" in cfg["services"], "nginx-exporter service missing"
+    cmd = " ".join(cfg["services"]["nginx-exporter"].get("command", []))
+    assert "nginx_status" in cmd, "nginx_status scrape URI missing from exporter command"

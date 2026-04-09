@@ -36,9 +36,9 @@ The server listens on `http://localhost:8080` by default.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PORT` | `8080` | Port the HTTP server listens on |
+| `PORT` | `8080` | Port the HTTP server listens on. Set to `8081` for a second instance. |
 | `API_KEY` | *(unset)* | If set, all POST requests must include `Authorization: Bearer <key>` or `Authorization: Api-Key <key>`. Leave empty to disable auth. |
-| `GATEWAY_METRICS_PORT` | `9101` | Port for the Prometheus metrics scrape endpoint |
+| `GATEWAY_METRICS_PORT` | `9101` | Port for the Prometheus metrics scrape endpoint. Set to `9102` for a second instance. |
 | `GPU_HOURLY_COST_USD` | `1.10` | Hourly GPU cost used to estimate `gateway_gpu_cost_usd_total` (A10 default) |
 | `VLLM_SERVER_PROFILE` | `default` | Server profile label attached to all Prometheus metrics (e.g. `chunked_prefill`, `baseline`) |
 
@@ -237,15 +237,91 @@ Open `tests/bruno/` in [Bruno](https://www.usebruno.com/) and select the **local
 
 ---
 
+## Nginx Load Balancer
+
+**Prerequisites:** [nginx](https://nginx.org/) (any standard build with `ngx_http_stub_status_module`)
+
+`nginx-gateway-lb.conf` (project root) distributes traffic round-robin across two gateway instances and exposes an `/nginx_status` endpoint for Prometheus.
+
+### Full stack with two gateway instances
+
+```
+Client → :8780 (Nginx LB) → :8080 / :8081 (Gateway instances) → Modal vLLM
+```
+
+```bash
+# Terminal 1 — gateway instance 1 (add API_KEY=your-key to enable auth)
+PORT=8080 GATEWAY_METRICS_PORT=9101 API_KEY=test-key uv run python main.py
+
+# Terminal 2 — gateway instance 2 (must use the same API_KEY)
+PORT=8081 GATEWAY_METRICS_PORT=9102 API_KEY=test-key uv run python main.py
+
+# Terminal 3 — Nginx load balancer (rootless, logs to /tmp)
+nginx -p /tmp -c "$(pwd)/nginx-gateway-lb.conf"
+
+# Stop Nginx when done
+nginx -p /tmp -s stop
+```
+
+All client traffic goes to `:8780`; Nginx round-robins requests between the two gateway instances.
+
+> **Auth note:** Nginx is auth-transparent — it passes the `Authorization` header straight through to the gateway unchanged. If `API_KEY` is set on the gateway instances, every request through the LB must include the header. If `API_KEY` is unset (omit it from the command above), no header is required.
+
+### Load balancing test scenario
+
+Send 10 requests through the load balancer and verify they are split evenly:
+
+```bash
+# Without auth (API_KEY unset on gateway instances)
+for i in $(seq 10); do
+  curl -s -X POST http://127.0.0.1:8780/v1/chat/completions \
+    -H 'Content-Type: application/json' \
+    -d '{"model":"local","messages":[{"role":"user","content":"hi"}]}' \
+    | jq -r .backend
+done
+
+# With auth (API_KEY=test-key set on gateway instances)
+for i in $(seq 10); do
+  curl -s -X POST http://127.0.0.1:8780/v1/chat/completions \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer test-key' \
+    -d '{"model":"local","messages":[{"role":"user","content":"hi"}]}' \
+    | jq -r .backend
+done
+
+# Expected output: alternating "local" entries served by instance 1 and instance 2
+
+# Verify the split — each instance should show ~5 requests
+curl -s http://localhost:9101/metrics | grep 'gateway_requests_total{' | head -5
+curl -s http://localhost:9102/metrics | grep 'gateway_requests_total{' | head -5
+
+# Nginx connection stats (active connections, total requests handled)
+curl -s http://localhost:8780/nginx_status
+```
+
+### Single-gateway mode
+
+To use only one gateway (skip instance 2), comment out the second `server` line in `nginx-gateway-lb.conf`:
+
+```nginx
+upstream inference_gateways {
+    server 127.0.0.1:8080;
+    # server 127.0.0.1:8081;
+}
+```
+
+---
+
 ## Monitoring Stack (Prometheus + Grafana)
 
 **Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose
 
-```bash
-# 1. Start the gateway first
-uv run python main.py
+The monitoring stack scrapes **both** gateway instances, plus Nginx metrics via `nginx-prometheus-exporter`.
 
-# 2. Launch Prometheus + Grafana
+```bash
+# 1. Start both gateway instances and Nginx (see above)
+
+# 2. Launch Prometheus + Grafana + Nginx exporter
 cd monitoring
 docker compose up -d
 ```
@@ -254,15 +330,18 @@ docker compose up -d
 |---|---|---|
 | Prometheus | http://localhost:9090 | — |
 | Grafana | http://localhost:3000 | admin / admin |
+| Nginx exporter | http://localhost:9113/metrics | — |
 
 Prometheus scrapes:
-- Gateway metrics on `:9101` (`job_name: gateway`)
-- Modal vLLM standard deployment over HTTPS (`job_name: vllm_standard`)
-- Modal vLLM optimized deployment over HTTPS (`job_name: vllm_optimized`)
+- `gateway` — instance 1 metrics on `:9101`
+- `gateway2` — instance 2 metrics on `:9102`
+- `nginx` — Nginx exporter on `:9113` (active connections, requests/s, upstream health)
+- `vllm_standard` — Modal vLLM standard deployment over HTTPS
+- `vllm_optimized` — Modal vLLM optimized deployment over HTTPS
+
+Check all targets are **UP**: http://localhost:9090/targets
 
 Set `VLLM_SERVER_PROFILE=default` or `VLLM_SERVER_PROFILE=optimized` in `.env` to label gateway metrics with the active deployment.
-
-Check targets are **UP**: http://localhost:9090/targets
 
 Grafana loads with a pre-provisioned Prometheus datasource and four dashboards: **gateway-proxy**, **overview**, **technique-cost**, **tinyllama-ops**.
 
