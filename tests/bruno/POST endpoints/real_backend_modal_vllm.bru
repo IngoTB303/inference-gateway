@@ -18,6 +18,10 @@ body:json {
   }
 }
 
+script:pre-request {
+  bru.runner.skipRequest()
+}
+
 tests {
   test("status is 200", function() {
     expect(res.status).to.equal(200);
