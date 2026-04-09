@@ -306,6 +306,66 @@ The UI inherits `GATEWAY_OPENAI_BASE`, `MODEL_NAME`, and `API_KEY` from `.env` /
 
 ---
 
+## Modal vLLM Backends
+
+Three container profiles are available, each a distinct vLLM configuration on an A10G GPU:
+
+| Profile | Modal file | Key flags | Technique label |
+|---|---|---|---|
+| `standard` | `modal/vllm_gemma4.py` | baseline | `baseline` |
+| `optimized` | `modal/vllm_gemma4_optimized.py` | chunked prefill + prefix caching | `optimized` |
+| `hardcore` | `modal/vllm_gemma4_hardcore.py` | optimized + fp8 KV cache, 4096-token batches | `hardcore` |
+
+### Deploy a container
+
+```bash
+# Deploy one profile
+# (modal is in the 'deploy' group; the script uses 'uv run --group deploy modal deploy' internally)
+bash scripts/deploy_modal_vllm.sh standard
+bash scripts/deploy_modal_vllm.sh optimized
+bash scripts/deploy_modal_vllm.sh hardcore
+```
+
+After deploy, paste the printed URL into `config.yaml` under the matching backend name.
+
+### Run A/B experiments
+
+Before running experiments, ensure the full stack is up:
+
+```bash
+# Gateway (terminal 1)
+uv run python main.py
+
+# Nginx LB (terminal 2)
+nginx -p /tmp -c "$(pwd)/nginx-gateway-lb.conf"
+
+# Monitoring (terminal 3 — optional)
+cd monitoring && docker compose up -d
+```
+
+Then run the experiments:
+
+```bash
+# Run 3 crew passes per profile (backends must already be deployed)
+bash scripts/run_experiments.sh
+
+# Deploy Modal containers first, then wait for them to warm up and run
+bash scripts/run_experiments.sh --deploy
+
+# Customise profiles, number of runs, or topic
+bash scripts/run_experiments.sh --profiles standard,hardcore --runs 5 --topic "prefix caching for RAG"
+```
+
+The script:
+1. (Optionally) deploys each Modal container via `deploy_modal_vllm.sh`.
+2. Polls the gateway until the backend responds (cold start + weight download ≈ 3–8 min).
+3. Runs `uv run --group crew python crew.py --technique <label>` N times per profile.
+4. Prints a comparison table of success rate and wall-clock time.
+
+Technique labels flow through as the `X-Technique` header and appear as Prometheus metric labels for per-technique comparison in Grafana.
+
+---
+
 ## Nginx Load Balancer
 
 **Prerequisites:** [nginx](https://nginx.org/) (any standard build with `ngx_http_stub_status_module`)
@@ -318,11 +378,30 @@ The UI inherits `GATEWAY_OPENAI_BASE`, `MODEL_NAME`, and `API_KEY` from `.env` /
 Client → :8780 (Nginx LB) → :8080 / :8081 (Gateway instances) → Modal vLLM
 ```
 
+**Quick start — one script:**
+
 ```bash
-# Terminal 1 — gateway instance 1 (add API_KEY=your-key to enable auth)
+# Start both gateways + Nginx in the background (Ctrl-C to stop all)
+API_KEY=test-key bash scripts/start_stack.sh
+```
+
+Logs stream to `/tmp/gw1.log`, `/tmp/gw2.log`. Override ports or skip Nginx:
+
+```bash
+# Skip Nginx (single gateway mode)
+SKIP_NGINX=1 bash scripts/start_stack.sh
+
+# Custom ports
+PORT1=8080 PORT2=8090 API_KEY=test-key bash scripts/start_stack.sh
+```
+
+**Manual start (separate terminals):**
+
+```bash
+# Terminal 1 — gateway instance 1
 PORT=8080 GATEWAY_METRICS_PORT=9101 API_KEY=test-key uv run python main.py
 
-# Terminal 2 — gateway instance 2 (must use the same API_KEY)
+# Terminal 2 — gateway instance 2
 PORT=8081 GATEWAY_METRICS_PORT=9102 API_KEY=test-key uv run python main.py
 
 # Terminal 3 — Nginx load balancer (rootless, logs to /tmp)

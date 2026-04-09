@@ -1,0 +1,48 @@
+meta {
+  name: Modal Gemma4 VLLM hardcore
+  type: http
+  seq: 24
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: inherit
+}
+
+headers {
+  X-Technique: hardcore
+}
+
+body:json {
+  {
+    "model": "modal-gemma4-hardcore",
+    "messages": [{"role": "user", "content": "Hi, what is your key advantage?"}],
+    "max_tokens": 1024
+  }
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("backend field is 'modal-gemma4-hardcore'", function() {
+    expect(res.body.backend).to.equal("modal-gemma4-hardcore");
+  });
+
+  test("choices has at least one entry", function() {
+    expect(res.body.choices).to.have.length.above(0);
+  });
+
+  test("usage.latency_ms is present and non-negative", function() {
+    expect(res.body.usage).to.have.property("latency_ms");
+    expect(res.body.usage.latency_ms).to.be.at.least(0);
+  });
+}
+
+docs {
+  Routes to the hardcore-optimized Modal vLLM backend.
+  fp8 KV cache + chunked prefill + prefix caching.
+  Requires the Modal vLLM hardcore server to be running.
+}

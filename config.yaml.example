@@ -32,4 +32,23 @@ backends:
     timeout: 120
     model: default   # vLLM requires this field; any string is accepted
 
+  # Gemma 4 A/B experiment backends — URLs printed by deploy_modal_vllm.sh
+  - name: modal-gemma4-standard
+    type: http
+    url: https://your-modal-username--vllm-gemma4-standard-serve.modal.run/
+    timeout: 120
+    model: gemma-4-e2b-it
+
+  - name: modal-gemma4-optimized
+    type: http
+    url: https://your-modal-username--vllm-gemma4-optimized-serve.modal.run/
+    timeout: 120
+    model: gemma-4-e2b-it
+
+  - name: modal-gemma4-hardcore
+    type: http
+    url: https://your-modal-username--vllm-gemma4-hardcore-serve.modal.run/
+    timeout: 120
+    model: gemma-4-e2b-it
+
 default_backend: local
