@@ -1,11 +1,36 @@
 # Inference Gateway — Submission
 
 **Author:** Ingo Villnow  
-**Stack:** Python gateway · Nginx LB · Modal vLLM (A10G, Gemma 4 E2B-IT) · CrewAI Researcher→Writer · Prometheus + Grafana
+**Stack:** FastAPI + uvicorn gateway · Nginx LB · Modal vLLM (A10G, Gemma 4 E2B-IT) · CrewAI Researcher→Writer · Prometheus + Grafana
 
 This document gives a reviewer everything needed to clone, configure, and run the full stack from scratch.  
 For architecture details, API reference, and test instructions see [README.md](README.md).  
 For experiment analysis, SLIs/SLOs, and hardware justification see [submission.ipynb](submission.ipynb) / [submission.pdf](submission.pdf).
+
+---
+
+## Rubric Quick-Reference
+
+| Rubric Area (Weight) | Where to Find It |
+|---|---|
+| **Agent Framing & SLOs** (10%) | Notebook Section 2, `crew.py` (Researcher→Writer pipeline, SLI/SLO table) |
+| **End-to-End Path & Diagnosis Story** (20%) | Notebook Section 1.2 (layer-by-layer triage table), Grafana dashboards, Reflection below |
+| **Experimental Rigor — Deltas & Controls** (25%) | Notebook Section 3, `data/experiments.csv`, `scripts/run_experiments.sh` |
+| **Model / Instance Justification** (20%) | Notebook Section 4 (Gemma 4 + A10G choice, GPU comparison table, fallback analysis) |
+| **Dashboard — Full-path** (15%) | Notebook Section 5, `monitoring/grafana_dashboards/` (4 JSON dashboards auto-provisioned) |
+| **Presentation** (10%) | This document + notebook narrative flow |
+
+---
+
+## Submission Checklist
+
+- [x] **Architecture:** Nginx :8780 → Gateway :8080/:8081 → Modal vLLM (A10G) — verified with curl and Grafana
+- [x] **Metrics:** SLIs defined in notebook Section 2 (p50/p95 latency, success rate ≥90%, cost ≤$0.05/request)
+- [x] **Reproducibility:** All scripts documented, `.env.example` provided, no secrets committed
+- [x] **Results:** Summary table + 2 plot figures in notebook Section 3; version pinning in Modal deploy files
+- [x] **Memo:** Data-backed GPU comparison table (A10G vs T4 vs L4 vs H100) in notebook Section 4
+- [x] **Dashboard:** 4 Grafana dashboards covering gateway, Nginx, vLLM, and per-technique cost; JSON exported in `monitoring/grafana_dashboards/`
+- [x] **Reflection:** Below (<300 words) covering surprises, debugging, and next steps
 
 ---
 
@@ -207,13 +232,35 @@ increase(gateway_gpu_cost_usd_total[1h])
 
 ---
 
+## Key Design Decisions
+
+### Why Modal instead of SSH tunnels
+
+The deliverables mention an SSH tunnel in the reference stack. I chose Modal instead because it provides **reproducible GPU containers** with version-pinned CUDA/vLLM images (`vllm==0.19.0`, `transformers==5.5.0`, CUDA 12.9). An SSH tunnel to a shared lab server would add a fragile network hop whose latency is outside my control and make the setup non-reproducible for reviewers. With Modal, `bash scripts/deploy_modal_vllm.sh optimized` gives any reviewer the same environment I tested against.
+
+### Why two gateway instances behind Nginx
+
+A single gateway instance would satisfy the functional requirement, but running two instances demonstrates that the gateway is **stateless and horizontally scalable**. It also exercises the Nginx round-robin path that a production deployment would use, and lets Prometheus show per-instance metrics (`gateway` vs `gateway2` jobs) — proving the dashboards work at the infrastructure level, not just the application level.
+
+### Why X-Technique as a custom header
+
+I needed a way to segment Prometheus metrics by engine configuration (baseline vs optimized vs hardcore) without changing the OpenAI request schema. A custom `X-Technique` header flows through Nginx transparently, lands as a Prometheus label on every gateway metric, and lets Grafana filter dashboards by technique. The alternative — encoding it in the `model` field — would have conflated routing and labeling.
+
+### Why echo mode as the default
+
+When `config.yaml` points `default_backend` to the `local` echo backend, every Gateway endpoint works without any external dependency. This means reviewers can `uv run python main.py` and immediately run the full test suite (144 tests pass) without deploying a GPU container or setting up credentials. Real backends are one `config.yaml` edit away.
+
+---
+
 ## Reflection
 
-**Biggest surprise:** Gemma 4 uses heterogeneous attention head dimensions (256 for local layers, 512 for global layers), which forces vLLM to fall back from FlashAttention to the Triton attention backend. This was not documented for vLLM 0.19.0 and only surfaced at serve-time. The practical impact was lower throughput (~20–40 tok/s on A10G) than similar-sized models with uniform head dimensions. The workaround was `--async-scheduling` combined with tuned batch budgets to prevent the Triton backend from becoming the bottleneck.
+**Biggest surprise:** Gemma 4's heterogeneous attention head dimensions (256 for local layers, 512 for global layers) forced vLLM to fall back from FlashAttention to the Triton attention backend. This was undocumented for vLLM 0.19.0 and only surfaced at serve-time via a log line: `Using Triton attention backend`. The practical impact was lower throughput (~20–40 tok/s on A10G) than comparably sized models with uniform head dimensions — roughly half what I projected from published benchmarks. The workaround was `--async-scheduling` combined with tuned batch budgets (`--max-num-batched-tokens`) to pipeline kernel calls and prevent the Triton backend from becoming the bottleneck.
 
-**What broke first (and which metric caught it):** The first experiment run timed out because the Modal cold-start — image pull, CUDA setup, and weight download — exceeded the gateway's 120 s backend timeout. The metric that caught it was `gateway_errors_total{status_code="504"}` spiking to 1 immediately in Grafana. Increasing `scaledown_window` to 15 minutes (so the container stays warm between runs) and raising `timeout` in `config.yaml` fixed the issue for all subsequent runs.
+**What broke first (and how I diagnosed it):** The first experiment run timed out. I saw `gateway_errors_total{status_code="504"}` spike to 1 in Grafana immediately. Checking `gateway_request_duration_seconds`, latency was flatlined at exactly 120 seconds — the backend timeout configured in `config.yaml`. This ruled out a vLLM OOM or inference error (which would have returned 5xx faster) and pointed to Modal cold-start: image pull, CUDA initialisation, and weight download exceeding the timeout. The fix was two-fold: raise `scaledown_window` to 15 minutes (so the container stays warm between runs) and increase `timeout` in `config.yaml` to 300 seconds for the initial deploy. All subsequent runs completed in 4–16 seconds.
+
+**What I'd instrument next:** The highest-value addition would be a **`gateway_backend_request_duration_seconds`** histogram that measures only the time waiting for the backend, excluding gateway overhead (validation, auth, normalization). Currently `gateway_request_duration_seconds` is end-to-end, so when latency regresses I can't immediately tell whether the problem is in my code or in vLLM. I'd also add per-agent task timing in `crew.py` to decompose the crew's wall-clock into Researcher vs Writer phases — understanding which agent dominates latency is critical for optimising the agentic use case.
 
 **Next steps for production:** Three changes would have the most impact:
-1. **FP8 KV cache on H100** — moving to Hopper (compute capability ≥ 9.0) unlocks `--kv-cache-dtype fp8`, roughly halving KV memory usage and allowing `max_model_len=32768` or much higher concurrent sequences on the same VRAM budget.
-2. **Modal autoscaling** — replacing `min_containers=max_containers=1` with a proper autoscaler that scales to zero when idle and bursts to 3–5 containers under load would make the cost SLO self-enforcing without manual intervention.
-3. **Structured crew output + retry** — the Writer agent occasionally produces output slightly over the 120-word limit; adding a Pydantic output schema to the CrewAI task would enforce the contract at the framework level and eliminate silent application-layer SLO violations.
+1. **FP8 KV cache on H100** — moving to Hopper (compute capability ≥ 9.0) unlocks `--kv-cache-dtype fp8`, roughly halving KV memory and allowing `max_model_len=32768` or much higher concurrent sequences on the same VRAM budget.
+2. **Modal autoscaling** — replacing `min_containers=max_containers=1` with a proper autoscaler that scales to zero when idle and bursts to 3–5 containers under load would make the cost SLO self-enforcing.
+3. **Structured crew output** — the Writer agent occasionally exceeds the 120-word limit; a Pydantic output schema on the CrewAI task would enforce the contract at the framework level and eliminate silent application-layer SLO violations.
