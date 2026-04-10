@@ -2,7 +2,9 @@
 
 An OpenAI-compatible HTTP gateway that routes chat completion requests to multiple configurable inference backends (llama.cpp, vLLM, or any OpenAI-compatible server) or falls back to an echo response when no real backend is reachable.
 
-**Team members:** Dev Jadhav, Ingo Villow
+**Team members:** Ingo Villnow
+
+> **Reviewer?** See [SUBMISSION.md](SUBMISSION.md) for the complete step-by-step setup guide, and [submission.ipynb](submission.ipynb) / [submission.pdf](submission.pdf) for experiment analysis, SLIs/SLOs, and hardware justification.
 
 ---
 
@@ -39,10 +41,12 @@ The server listens on `http://localhost:8080` by default.
 | `PORT` | `8080` | Port the HTTP server listens on. Set to `8081` for a second instance. |
 | `API_KEY` | *(unset)* | If set, all POST requests must include `Authorization: Bearer <key>` or `Authorization: Api-Key <key>`. Leave empty to disable auth. |
 | `GATEWAY_METRICS_PORT` | `9101` | Port for the Prometheus metrics scrape endpoint. Set to `9102` for a second instance. |
-| `GPU_HOURLY_COST_USD` | `1.10` | Hourly GPU cost used to estimate `gateway_gpu_cost_usd_total` (A10 default) |
-| `VLLM_SERVER_PROFILE` | `default` | Server profile label attached to all Prometheus metrics (e.g. `chunked_prefill`, `baseline`) |
+| `GPU_HOURLY_COST_USD` | `1.10` | Hourly GPU cost used to estimate `gateway_gpu_cost_usd_total` (A10G default). |
+| `VLLM_SERVER_PROFILE` | `default` | Server profile label attached to all Prometheus metrics (e.g. `baseline`, `optimized`, `hardcore`). |
+| `BACKEND_URL` | *(unset)* | Legacy single-backend URL. Overridden by `config.yaml` when present; if both are unset the gateway runs in echo mode. |
 | `OTEL_TRACES_EXPORTER` | `none` | Set to `otlp` to enable distributed tracing. Any other value disables tracing entirely (zero overhead). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:4317` | gRPC endpoint for the OTLP collector (e.g. Jaeger). Only used when `OTEL_TRACES_EXPORTER=otlp`. |
+| `OTEL_SERVICE_NAME` | `inference-gateway` | Service name reported to the OTLP collector / Jaeger UI. |
 
 ### Backend configuration (`config.yaml`)
 
@@ -265,12 +269,17 @@ uv run --group crew python crew.py --topic "prefix caching for RAG" --technique 
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `GATEWAY_OPENAI_BASE` | `http://127.0.0.1:8780/v1` | Full gateway URL including `/v1` |
-| `GATEWAY_USE_LOAD_BALANCER` | `true` | Set to `false` to bypass Nginx and hit `:8080` directly |
-| `MODEL_NAME` | `modal-gemma4-optimized` | Model name passed to the gateway |
-| `OPENAI_API_KEY` / `API_KEY` | `dummy` | API key forwarded to the gateway |
-| `CREW_VLLM_WAIT_S` | `0` | Seconds to poll `/v1/models` before starting (0 = skip) |
-| `CREW_LLM_STREAM` | `true` | Enable streaming for LLM calls |
+| `GATEWAY_OPENAI_BASE` | `http://127.0.0.1:8780/v1` | Full gateway URL including `/v1`. Alias: `OPENAI_API_BASE`. |
+| `GATEWAY_USE_LOAD_BALANCER` | `true` | Set to `false` to bypass Nginx and hit `:8080` directly. |
+| `GATEWAY_HOST` | `127.0.0.1` | Gateway host override (used when `GATEWAY_USE_LOAD_BALANCER=false`). |
+| `GATEWAY_PORT` | `8080` | Gateway port override (used when `GATEWAY_USE_LOAD_BALANCER=false`). |
+| `GATEWAY_LB_HOST` | `127.0.0.1` | Nginx LB host override. |
+| `GATEWAY_LB_PORT` | `8780` | Nginx LB port override. |
+| `MODEL_NAME` | `modal-gemma4-optimized` | Model name passed to the gateway (must match a backend name in `config.yaml`). |
+| `OPENAI_API_KEY` / `API_KEY` | `dummy` | API key forwarded to the gateway. |
+| `CREW_VLLM_WAIT_S` | `0` | Seconds to poll `/v1/models` before starting the crew (0 = skip). |
+| `CREW_VLLM_POLL_S` | `8` | Polling interval in seconds while waiting for vLLM to become ready. |
+| `CREW_LLM_STREAM` | `true` | Enable streaming for LLM calls. |
 
 ### Failure modes
 
@@ -534,6 +543,7 @@ cd monitoring && docker compose up -d jaeger
 ```bash
 OTEL_TRACES_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317
+OTEL_SERVICE_NAME=inference-gateway   # name shown in Jaeger UI (optional, this is the default)
 ```
 
 **3. Restart the gateway, then run a request:**
@@ -570,3 +580,13 @@ This creates a `crew.run` root span (with `llm.technique=chunked_prefill`) that 
 | Backend did not respond in time | 504 | `{"error": "gateway_timeout"}` |
 | Backend returned 5xx | 502 | `{"error": "backend_error"}` |
 | Backend unreachable | 502 | `{"error": "backend_unavailable"}` |
+
+---
+
+## Reflection
+
+**Biggest surprise:** Gemma 4 uses heterogeneous attention head dimensions (256 for local layers, 512 for global layers), which forces vLLM to fall back from FlashAttention to the Triton attention backend. This was undocumented for vLLM 0.19.0 and only surfaced at serve-time. The practical effect was lower throughput (~20–40 tok/s on A10G) than comparably sized models with uniform head dimensions. The workaround was `--async-scheduling` with tuned batch budgets (`--max-num-batched-tokens`) to prevent Triton from becoming the bottleneck.
+
+**What broke first (and which metric caught it):** The first experiment run timed out because the Modal cold-start — image pull, CUDA initialisation, and weight download — exceeded the gateway's 120 s backend timeout. The metric that caught it was `gateway_errors_total{status_code="504"}` spiking immediately in Grafana. Increasing `scaledown_window` to 15 minutes and raising `timeout` in `config.yaml` fixed the issue for all subsequent runs.
+
+**Next steps for production:** Three changes would have the most impact: (1) **FP8 KV cache on H100** — Hopper (compute capability ≥ 9.0) unlocks `--kv-cache-dtype fp8`, halving KV memory and allowing `max_model_len=32768` or far higher concurrency on the same VRAM budget. (2) **Modal autoscaling** — replacing `min_containers=max_containers=1` with a proper autoscaler that scales to zero when idle would make the cost SLO self-enforcing. (3) **Structured crew output** — adding a Pydantic output schema to the CrewAI Writer task would enforce the 120-word contract at the framework level and eliminate silent application-layer SLO violations.
