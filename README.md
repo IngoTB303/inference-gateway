@@ -220,7 +220,7 @@ uv run pytest tests/test_gateway.py::test_routing_by_model_echo   # single test
 
 The suite uses a FastAPI `TestClient` and [respx](https://lundberg.github.io/respx/) to mock backend `httpx` calls. No running backend is required.
 
-**74 tests** covering: GET endpoints, echo shape, request-ID, validation errors (400), auth (401), SSE streaming, backend proxy, response normalization, multi-backend routing, metrics, `latency_ms` in usage, Prometheus counter/histogram/gauge behaviour, `X-Technique` label propagation, Nginx config validation.
+**144 tests** covering: GET endpoints, echo shape, request-ID, validation errors (400), auth (401), SSE streaming, backend proxy, response normalization, multi-backend routing, metrics, `latency_ms` in usage, Prometheus counter/histogram/gauge behaviour, `X-Technique` label propagation, Nginx config validation, crew health checks, and experiment script behaviour.
 
 ### Live backend tests
 
@@ -585,8 +585,8 @@ This creates a `crew.run` root span (with `llm.technique=chunked_prefill`) that 
 
 ## Reflection
 
-**Biggest surprise:** Gemma 4 uses heterogeneous attention head dimensions (256 for local layers, 512 for global layers), which forces vLLM to fall back from FlashAttention to the Triton attention backend. This was undocumented for vLLM 0.19.0 and only surfaced at serve-time. The practical effect was lower throughput (~20–40 tok/s on A10G) than comparably sized models with uniform head dimensions. The workaround was `--async-scheduling` with tuned batch budgets (`--max-num-batched-tokens`) to prevent Triton from becoming the bottleneck.
+**Biggest surprise:** Gemma 4's heterogeneous attention head dimensions (256 for local layers, 512 for global layers) forced vLLM to fall back from FlashAttention to the Triton attention backend. This was undocumented for vLLM 0.19.0 and only surfaced at serve-time via a log line: `Using Triton attention backend`. The practical impact was lower throughput (~20–40 tok/s on A10G) than comparably sized models with uniform head dimensions. The workaround was `--async-scheduling` with tuned batch budgets (`--max-num-batched-tokens`) to pipeline kernel calls and prevent the Triton backend from becoming the bottleneck.
 
-**What broke first (and which metric caught it):** The first experiment run timed out because the Modal cold-start — image pull, CUDA initialisation, and weight download — exceeded the gateway's 120 s backend timeout. The metric that caught it was `gateway_errors_total{status_code="504"}` spiking immediately in Grafana. Increasing `scaledown_window` to 15 minutes and raising `timeout` in `config.yaml` fixed the issue for all subsequent runs.
+**What broke first (and how I diagnosed it):** The first experiment run timed out. I saw `gateway_errors_total{status_code="504"}` spike to 1 in Grafana immediately. Checking `gateway_request_duration_seconds`, latency was flatlined at exactly 120 seconds — the backend timeout in `config.yaml`. This ruled out a vLLM OOM (which would have returned 5xx faster) and pointed to Modal cold-start: image pull, CUDA initialisation, and weight download exceeding the timeout. The fix was raising `scaledown_window` to 15 minutes and increasing the backend timeout to 300 seconds for initial deploys.
 
 **Next steps for production:** Three changes would have the most impact: (1) **FP8 KV cache on H100** — Hopper (compute capability ≥ 9.0) unlocks `--kv-cache-dtype fp8`, halving KV memory and allowing `max_model_len=32768` or far higher concurrency on the same VRAM budget. (2) **Modal autoscaling** — replacing `min_containers=max_containers=1` with a proper autoscaler that scales to zero when idle would make the cost SLO self-enforcing. (3) **Structured crew output** — adding a Pydantic output schema to the CrewAI Writer task would enforce the 120-word contract at the framework level and eliminate silent application-layer SLO violations.
