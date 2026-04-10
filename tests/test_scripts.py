@@ -44,6 +44,9 @@ class TestScriptPresence:
     def test_start_stack_exists(self):
         assert (SCRIPTS / "start_stack.sh").is_file()
 
+    def test_export_pdf_exists(self):
+        assert (SCRIPTS / "export_pdf.sh").is_file()
+
 
 # ---------------------------------------------------------------------------
 # Bash syntax
@@ -68,6 +71,32 @@ class TestBashSyntax:
         assert bash_syntax_ok(SCRIPTS / "start_stack.sh"), (
             "start_stack.sh has syntax errors"
         )
+
+    def test_export_pdf_syntax(self):
+        assert bash_syntax_ok(SCRIPTS / "export_pdf.sh"), (
+            "export_pdf.sh has syntax errors"
+        )
+
+
+class TestExportPdfContent:
+    def setup_method(self):
+        self.src = (SCRIPTS / "export_pdf.sh").read_text()
+
+    def test_uses_uv_run(self):
+        assert "uv run" in self.src
+
+    def test_uses_webpdf_exporter(self):
+        assert "--to webpdf" in self.src
+
+    def test_allows_chromium_download(self):
+        assert "--allow-chromium-download" in self.src
+
+    def test_defaults_to_submission_notebook(self):
+        assert "submission.ipynb" in self.src
+
+    def test_accepts_custom_notebook_arg(self):
+        # Script should accept an optional first argument for the notebook path
+        assert '"${1:-' in self.src
 
 
 # ---------------------------------------------------------------------------
