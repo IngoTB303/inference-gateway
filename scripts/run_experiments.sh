@@ -137,6 +137,14 @@ if $DEPLOY; then
 fi
 
 # ---------------------------------------------------------------------------
+# CSV output — written to data/experiments.csv (one row per run)
+# ---------------------------------------------------------------------------
+CSV_OUT="$REPO_ROOT/data/experiments.csv"
+mkdir -p "$(dirname "$CSV_OUT")"
+echo "technique,profile,run,wall_clock_s,success,error" > "$CSV_OUT"
+echo "Writing per-run results to: $CSV_OUT"
+
+# ---------------------------------------------------------------------------
 # Results accumulator (one pre-formatted line per profile)
 # ---------------------------------------------------------------------------
 RESULT_LINES=""
@@ -176,6 +184,7 @@ for profile in "${PROFILES[@]}"; do
     echo "  ── Run $run / $N_RUNS ──"
     start_ms=$(date +%s)
 
+    crew_exit=0
     if MODEL_NAME="$backend" \
        CREW_VLLM_WAIT_S=0 \
        uv run --group crew --group otel python "$REPO_ROOT/crew.py" \
@@ -183,14 +192,22 @@ for profile in "${PROFILES[@]}"; do
          --technique "$technique"; then
       ok=$(( ok + 1 ))
     else
+      crew_exit=$?
       fail=$(( fail + 1 ))
-      echo "  ⚠️  Run $run failed (exit $?)."
+      echo "  ⚠️  Run $run failed (exit $crew_exit)."
     fi
 
     end_ms=$(date +%s)
     elapsed=$(( end_ms - start_ms ))
     total_ms=$(( total_ms + elapsed ))
     echo "  ⏱  Run $run wall-clock: ${elapsed}s"
+
+    # Append one CSV row (ttft_s/tokens are left empty; read from Prometheus if needed)
+    if [[ $crew_exit -eq 0 ]]; then
+      echo "${technique},${profile},${run},${elapsed},true," >> "$CSV_OUT"
+    else
+      echo "${technique},${profile},${run},${elapsed},false,exit_code_${crew_exit}" >> "$CSV_OUT"
+    fi
   done
 
   if [[ $N_RUNS -gt 0 ]]; then
@@ -215,5 +232,6 @@ printf "  %-12s %-15s %-8s %s\n" "Profile" "Technique" "Success" "Avg (s)"
 printf "  %-12s %-15s %-8s %s\n" "-------" "---------" "-------" "-------"
 printf "%s" "$RESULT_LINES"
 echo ""
+echo "Results CSV:           $CSV_OUT"
 echo "Metrics per technique: curl http://localhost:9101/metrics | grep gateway_requests_total"
 echo "Grafana dashboard:     http://localhost:3000"

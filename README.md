@@ -361,9 +361,24 @@ The script:
 1. (Optionally) deploys each Modal container via `deploy_modal_vllm.sh`.
 2. Polls the gateway until the backend responds (cold start + weight download ≈ 3–8 min).
 3. Runs `uv run --group crew python crew.py --technique <label>` N times per profile.
-4. Prints a comparison table of success rate and wall-clock time.
+4. Writes per-run results to `data/experiments.csv` (technique, wall-clock, success/error).
+5. Prints a comparison table of success rate and wall-clock time.
 
 Technique labels flow through as the `X-Technique` header and appear as Prometheus metric labels for per-technique comparison in Grafana.
+
+### Analyse results in the submission notebook
+
+After running experiments, open `submission.ipynb` to visualise latency, success rate, and GPU cost:
+
+```bash
+# Install notebook dependencies once
+uv sync --group notebook
+
+# Open in VS Code (select the project venv as kernel)
+code submission.ipynb
+```
+
+`data/experiments.csv` is committed as sample data so the notebook runs offline. `run_experiments.sh` overwrites it with real results.
 
 ---
 
