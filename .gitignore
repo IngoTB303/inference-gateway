@@ -211,3 +211,7 @@ llama*
 
 # Local backend config (contains real URLs; use config.yaml.example as template)
 config.yaml
+
+# Claude and github settings
+.claude*
+.github*
