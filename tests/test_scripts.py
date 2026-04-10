@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import subprocess
 from pathlib import Path
 
@@ -208,6 +209,15 @@ class TestModalFiles:
 
         assert extract_max_seqs(hardcore_src) > extract_max_seqs(optimized_src)
 
+    def test_all_modal_files_use_a10g(self):
+        for fname in (
+            "vllm_gemma4.py",
+            "vllm_gemma4_optimized.py",
+            "vllm_gemma4_hardcore.py",
+        ):
+            src = (MODAL / fname).read_text()
+            assert "A10G" in src, f"{fname} missing A10G GPU type"
+
     def test_all_modal_files_serve_gemma4(self):
         for fname in (
             "vllm_gemma4.py",
@@ -216,3 +226,98 @@ class TestModalFiles:
         ):
             src = (MODAL / fname).read_text()
             assert "gemma-4-e2b-it" in src, f"{fname} missing gemma-4-e2b-it model name"
+
+
+# ---------------------------------------------------------------------------
+# Committed sample data/experiments.csv
+# ---------------------------------------------------------------------------
+
+REQUIRED_COLUMNS = {"technique", "profile", "run", "wall_clock_s", "success", "error"}
+EXPECTED_TECHNIQUES = {"baseline", "optimized", "hardcore"}
+
+
+class TestExperimentsCSV:
+    """Verify the committed sample CSV has the structure the notebook expects."""
+
+    def setup_method(self):
+        self.csv_path = REPO_ROOT / "data" / "experiments.csv"
+        with self.csv_path.open(newline="") as fh:
+            reader = csv.DictReader(fh)
+            self.columns = set(reader.fieldnames or [])
+            self.rows = list(reader)
+
+    def test_csv_exists(self):
+        assert self.csv_path.is_file(), "data/experiments.csv is missing"
+
+    def test_required_columns_present(self):
+        missing = REQUIRED_COLUMNS - self.columns
+        assert not missing, f"experiments.csv missing columns: {missing}"
+
+    def test_has_rows(self):
+        assert len(self.rows) > 0, "experiments.csv has no data rows"
+
+    def test_all_three_techniques_present(self):
+        found = {row["technique"] for row in self.rows}
+        missing = EXPECTED_TECHNIQUES - found
+        assert not missing, f"experiments.csv missing techniques: {missing}"
+
+    def test_wall_clock_s_is_positive(self):
+        for row in self.rows:
+            val = float(row["wall_clock_s"])
+            assert val > 0, f"wall_clock_s must be positive, got {val!r} in row {row}"
+
+    def test_success_is_boolean_string(self):
+        for row in self.rows:
+            assert row["success"].lower() in ("true", "false"), (
+                f"success must be 'true' or 'false', got {row['success']!r}"
+            )
+
+    def test_run_is_positive_integer(self):
+        for row in self.rows:
+            val = int(row["run"])
+            assert val >= 1, f"run must be ≥ 1, got {val!r}"
+
+    def test_profile_matches_known_profiles(self):
+        known = {"standard", "optimized", "hardcore"}
+        for row in self.rows:
+            assert row["profile"] in known, (
+                f"unknown profile {row['profile']!r} in experiments.csv"
+            )
+
+
+# ---------------------------------------------------------------------------
+# run_experiments.sh — CSV writing logic
+# ---------------------------------------------------------------------------
+
+
+class TestRunExperimentsCSVOutput:
+    """Verify that run_experiments.sh contains correct CSV-writing logic."""
+
+    def setup_method(self):
+        self.src = (SCRIPTS / "run_experiments.sh").read_text()
+
+    def test_creates_data_directory(self):
+        assert "mkdir -p" in self.src, "script must create the data directory"
+
+    def test_writes_csv_header(self):
+        # Header must contain at minimum the required column names
+        for col in REQUIRED_COLUMNS:
+            assert col in self.src, (
+                f"CSV header in run_experiments.sh missing column '{col}'"
+            )
+
+    def test_writes_csv_path_to_data_dir(self):
+        # CSV must be written into the data/ directory
+        assert "data/experiments.csv" in self.src
+
+    def test_appends_row_on_success(self):
+        # On crew success the script must append a 'true' row
+        assert ",true," in self.src or "true," in self.src
+
+    def test_appends_row_on_failure(self):
+        # On crew failure the script must append a 'false' row
+        assert ",false," in self.src or "false," in self.src
+
+    def test_csv_path_printed_in_summary(self):
+        # The summary block must tell the user where results were written
+        assert "CSV_OUT" in self.src and "Results CSV" in self.src
