@@ -91,6 +91,8 @@ def serve() -> None:
         json.dumps({"image": 0, "video": 0, "audio": 0}),
         "--async-scheduling",
         # Standard profile: no chunked prefill, no prefix caching
+        "--max-num-seqs",
+        "64",  # explicit to avoid vLLM's default of 256, which risks sampler warmup OOM
     ]
     print("Starting vLLM (standard):", " ".join(cmd), flush=True)
     subprocess.Popen(cmd)

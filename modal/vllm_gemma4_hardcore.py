@@ -13,11 +13,14 @@ Optimizations applied on top of the 'optimized' profile:
                                   (512 tokens); allows much longer prompts to be
                                   prefilled in a single pass, reducing TTFT for
                                   large-context requests.
-  --max-num-seqs 256              4× the 'optimized' profile; Gemma 4 E2B weights
-                                  (~4 GB bfloat16) leave ample KV headroom on A10G
-                                  at 95% memory utilisation.
-  --gpu-memory-utilization 0.95   push more of the 24 GB VRAM into KV cache;
-                                  the profile run stays below OOM on A10G E2B.
+  --max-num-seqs 128              2× the 'optimized' profile (64); capped at 128
+                                  to leave enough VRAM headroom for the sampler
+                                  warmup (256 dummy sequences × 1 MiB each).
+  --gpu-memory-utilization 0.92   pushes more VRAM into KV cache than the optimized
+                                  profile (0.90) while leaving ~1.7 GiB free for
+                                  sampler warmup and CUDA overhead. 0.95 caused OOM
+                                  during startup on A10G (only 253 MiB free vs the
+                                  256 MiB needed by the dummy sampler run).
 
 Note on FP8 KV cache: --kv-cache-dtype fp8 requires the fp8e4nv format which is
 only supported on Hopper (H100/H200, compute capability ≥ 9.0).  A10G is Ampere
@@ -45,10 +48,10 @@ VLLM_PORT = 8000
 MINUTES = 60
 
 MAX_MODEL_LEN = 8192
-GPU_MEMORY_UTILIZATION = 0.95  # push VRAM harder — safe for E2B on A10G
+GPU_MEMORY_UTILIZATION = 0.92  # above optimized (0.90) but leaves ~1.7 GiB for warmup overhead
 
 CHUNKED_PREFILL_TOKENS = 8192  # max batch budget: single-pass prefill for long prompts
-MAX_NUM_SEQS = 256  # 4× the optimized profile; E2B weights leave KV headroom
+MAX_NUM_SEQS = 128  # 2× the optimized profile; 256 caused OOM during sampler warmup on A10G
 
 # ---------------------------------------------------------------------------
 # Image — CUDA 12.9 + vLLM 0.19.0 (guide-prescribed install for Gemma 4)
