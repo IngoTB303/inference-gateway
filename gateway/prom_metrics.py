@@ -75,6 +75,26 @@ INTER_CHUNK_SECONDS = Histogram(
     buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5],
 )
 
+STREAMING_CHUNKS_TOTAL = Counter(
+    "gateway_streaming_chunks",
+    "Number of SSE data chunks forwarded per streaming request",
+    ["technique"],
+)
+
+REQUEST_SIZE_BYTES = Histogram(
+    "gateway_request_size_bytes",
+    "Request payload size in bytes sent to the backend",
+    ["backend", "technique"],
+    buckets=[64, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072],
+)
+
+RESPONSE_SIZE_BYTES = Histogram(
+    "gateway_response_size_bytes",
+    "Response payload size in bytes returned to the client",
+    ["backend", "technique"],
+    buckets=[64, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072],
+)
+
 # ---------------------------------------------------------------------------
 # Gauges
 # ---------------------------------------------------------------------------

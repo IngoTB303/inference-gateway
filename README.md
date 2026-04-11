@@ -208,6 +208,25 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   -d '{"model": "local", "messages": [{"role": "user", "content": "hello"}]}'
 ```
 
+#### Full Prometheus metric inventory
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `gateway_requests_total` | Counter | status_code, model, technique, server_profile | Total requests |
+| `gateway_errors_total` | Counter | status_code, technique, server_profile | 4xx/5xx responses |
+| `gateway_tokens_total` | Counter | type (prompt\|completion) | Tokens processed |
+| `gateway_gpu_cost_usd_total` | Counter | technique, server_profile | Estimated GPU cost |
+| `gateway_backend_selection_total` | Counter | backend, reason | Backend selections (model_match vs default_fallback) |
+| `gateway_streaming_chunks_total` | Counter | technique | SSE chunks forwarded per streaming request |
+| `gateway_request_duration_seconds` | Histogram | technique, server_profile | End-to-end request latency |
+| `gateway_backend_request_duration_seconds` | Histogram | backend, technique | Backend-only latency (excludes gateway overhead) |
+| `gateway_tokens_per_second` | Histogram | technique, server_profile | Completion tokens / backend_duration per request |
+| `gateway_ttft_seconds` | Histogram | — | Streaming time-to-first-token |
+| `gateway_inter_chunk_seconds` | Histogram | — | Inter-SSE-chunk delay |
+| `gateway_request_size_bytes` | Histogram | backend, technique | Request payload bytes sent to backend |
+| `gateway_response_size_bytes` | Histogram | backend, technique | Response payload bytes returned to client |
+| `gateway_active_requests` | Gauge | — | In-flight requests |
+
 ---
 
 ## Running Tests
@@ -221,7 +240,7 @@ uv run pytest tests/test_gateway.py::test_routing_by_model_echo   # single test
 
 The suite uses a FastAPI `TestClient` and [respx](https://lundberg.github.io/respx/) to mock backend `httpx` calls. No running backend is required.
 
-**144 tests** covering: GET endpoints, echo shape, request-ID, validation errors (400), auth (401), SSE streaming, backend proxy, response normalization, multi-backend routing, metrics, `latency_ms` in usage, Prometheus counter/histogram/gauge behaviour, `X-Technique` label propagation, Nginx config validation, crew health checks, and experiment script behaviour.
+**146 tests** covering: GET endpoints, echo shape, request-ID, validation errors (400), auth (401), SSE streaming, backend proxy, response normalization, multi-backend routing, metrics, `latency_ms` in usage, Prometheus counter/histogram/gauge behaviour, `X-Technique` label propagation, Nginx config validation, crew health checks, and experiment script behaviour.
 
 ### Live backend tests
 
@@ -282,6 +301,18 @@ uv run --group crew python crew.py --topic "prefix caching for RAG" --technique 
 | `CREW_VLLM_POLL_S` | `8` | Polling interval in seconds while waiting for vLLM to become ready. |
 | `CREW_LLM_STREAM` | `true` | Enable streaming for LLM calls. |
 
+### Per-task timing
+
+`crew.py` logs per-task wall-clock duration and agent step count to stderr after each task completes:
+
+```
+[crew] task=1 agent='Researcher' duration_s=8.32 [steps=4]
+[crew] task=2 agent='Writer' duration_s=5.11 [steps=3]
+[crew] total_duration_s=13.43
+```
+
+Tasks with `steps > 6` are flagged as possible CrewAI-internal retries. This lets you see whether a slow crew run was caused by the Researcher or Writer leg, and whether any silent retries inflated the wall-clock time.
+
 ### Failure modes
 
 | Situation | Behaviour |
@@ -289,7 +320,7 @@ uv run --group crew python crew.py --topic "prefix caching for RAG" --technique 
 | Gateway unreachable | Exits with clear error message before crew starts |
 | Gateway reports misconfigured upstream (`/health`) | Exits with `status=2` and instructions |
 | vLLM not ready within `CREW_VLLM_WAIT_S` | Exits with `status=3` and timeout message |
-| Empty / bad model response | CrewAI retries internally; logged to stderr |
+| Empty / bad model response | CrewAI retries internally; logged to stderr with step count |
 
 ---
 
@@ -475,6 +506,16 @@ curl -s http://localhost:9102/metrics | grep 'gateway_requests_total{' | head -5
 curl -s http://localhost:8780/nginx_status
 ```
 
+### Nginx access log with upstream timing
+
+`nginx-gateway-lb.conf` uses a custom `log_format gateway` that records `upstream_response_time` and `request_time` for every proxied request:
+
+```
+192.168.1.1 - [11/Apr/2026:12:00:01 +0000] "POST /v1/chat/completions HTTP/1.1" 200 upstream_response_time=4.231 request_time=4.232 bytes_sent=1842
+```
+
+Logs are written to `/tmp/nginx-gateway-lb.access.log`. `upstream_response_time` is the gateway-side view of latency — useful for cross-validating `gateway_request_duration_seconds`.
+
 ### Single-gateway mode
 
 To use only one gateway (skip instance 2), comment out the second `server` line in `nginx-gateway-lb.conf`:
@@ -519,7 +560,15 @@ Check all targets are **UP**: http://localhost:9090/targets
 
 Set `VLLM_SERVER_PROFILE=default` or `VLLM_SERVER_PROFILE=optimized` in `.env` to label gateway metrics with the active deployment.
 
-Grafana loads with a pre-provisioned Prometheus datasource and four dashboards: **gateway-proxy**, **overview**, **technique-cost**, **vllm-ops**.
+Grafana loads with a pre-provisioned Prometheus datasource and five dashboards:
+
+| Dashboard | File | Focus |
+|-----------|------|-------|
+| **Gateway — proxy timings + cost** | `gateway-proxy.json` | Request rate, E2E latency, TTFT, streaming inter-chunk, GPU spend |
+| **Gateway — deep diagnostics** | `gateway-deep-diagnostics.json` | Backend-only latency vs E2E overhead, tokens/s, errors, backend selection, payload sizes, streaming chunks |
+| **Technique cost + traces** | `technique-cost.json` | GPU cost by technique, cost delta vs baseline, token rates |
+| **vLLM — prefill vs decode** | `overview.json` | Engine-native vLLM metrics (prefill latency, inter-token latency, KV cache, speculative decode) |
+| **vLLM Ops** | `vllm-ops.json` | vLLM queue depth and operational health |
 
 ---
 
