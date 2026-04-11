@@ -13,7 +13,7 @@ class EchoBackend(BackendBase):
     def __init__(self, name: str = "local") -> None:
         self.name = name
 
-    def generate(self, body: dict[str, Any], request_id: str) -> dict[str, Any]:
+    async def generate(self, body: dict[str, Any], request_id: str) -> dict[str, Any]:
         messages = body.get("messages", [])
         prompt = ""
         for msg in reversed(messages):

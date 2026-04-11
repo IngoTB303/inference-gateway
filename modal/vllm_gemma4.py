@@ -52,15 +52,15 @@ app = modal.App("vllm-gemma4-standard")
 
 
 # ---------------------------------------------------------------------------
-# vLLM server — one warm container (min_containers=max_containers=1)
+# vLLM server — scale-to-zero (min_containers=0 saves GPU cost when idle)
 # ---------------------------------------------------------------------------
 @app.function(
     image=vllm_image,
     gpu=GPU_TYPE,
     timeout=20 * MINUTES,  # covers image build + weight download on cold start
-    min_containers=1,  # one warm container; LB distributes across both apps
+    min_containers=0,  # scale to zero when idle; cold start ~2-3 min (weights cached in volume)
     max_containers=1,  # hard cap — no autoscaling; cost-controlled for testing
-    scaledown_window=15 * MINUTES,  # stay warm between requests
+    scaledown_window=5 * MINUTES,  # scale down after 5 min of no requests
     volumes={
         "/root/.cache/huggingface": hf_cache_vol,
         "/root/.cache/vllm": vllm_cache_vol,
