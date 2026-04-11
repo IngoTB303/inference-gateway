@@ -41,7 +41,10 @@ from crewai.llm import LLM  # noqa: E402
 MODEL_NAME = os.environ.get("MODEL_NAME", "modal-gemma4-optimized")
 
 _use_lb = os.environ.get("GATEWAY_USE_LOAD_BALANCER", "true").strip().lower() not in (
-    "0", "false", "no", "off",
+    "0",
+    "false",
+    "no",
+    "off",
 )
 GATEWAY: str = (
     os.environ.get("GATEWAY_OPENAI_BASE")
@@ -75,11 +78,15 @@ def _setup_otel() -> "Any | None":
     try:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+            OTLPSpanExporter,
+        )
         from opentelemetry.sdk.resources import Resource, SERVICE_NAME
         from opentelemetry import trace
     except ImportError:
-        print("opentelemetry packages not installed; tracing disabled.", file=sys.stderr)
+        print(
+            "opentelemetry packages not installed; tracing disabled.", file=sys.stderr
+        )
         return None
     endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4317")
     resource = Resource({SERVICE_NAME: os.environ.get("OTEL_SERVICE_NAME", "crew")})
@@ -93,6 +100,7 @@ def _otel_inject_headers(headers: dict) -> None:
     """Inject current W3C trace context into headers. No-op if OTel is unavailable."""
     try:
         from opentelemetry.propagate import inject
+
         inject(headers)
     except ImportError:
         pass
@@ -115,7 +123,9 @@ def _wait_for_vllm() -> None:
     if max_wait <= 0:
         return
 
-    interval = max(2.0, min(float(os.environ.get("CREW_VLLM_POLL_S", "8") or "8"), 60.0))
+    interval = max(
+        2.0, min(float(os.environ.get("CREW_VLLM_POLL_S", "8") or "8"), 60.0)
+    )
     models_url = GATEWAY.rstrip("/") + "/models"
     deadline = time.monotonic() + max_wait
     last_note = ""
@@ -176,7 +186,10 @@ def _check_gateway_health() -> None:
     if body.get("status") == "misconfigured":
         warn = body.get("warning", "gateway reports upstream is misconfigured")
         print(f"\n✗ Gateway /health warning: {warn}", file=sys.stderr)
-        print("  Check GATEWAY_OPENAI_BASE and that the backend is reachable.\n", file=sys.stderr)
+        print(
+            "  Check GATEWAY_OPENAI_BASE and that the backend is reachable.\n",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
 
@@ -215,7 +228,12 @@ def build_crew(
         "base_url": _gateway,
         "temperature": 0.2,
     }
-    if os.environ.get("CREW_LLM_STREAM", "true").strip().lower() not in ("0", "false", "no", "off"):
+    if os.environ.get("CREW_LLM_STREAM", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
         llm_kwargs["stream"] = True
     llm = LLM(**llm_kwargs)
 
@@ -236,8 +254,7 @@ def build_crew(
 
     task_research = Task(
         description=(
-            f"Topic: {topic}. "
-            "List the key ideas only — no preamble, no conclusion."
+            f"Topic: {topic}. List the key ideas only — no preamble, no conclusion."
         ),
         expected_output="Bullet list of 3–5 concise points.",
         agent=researcher,
@@ -255,6 +272,48 @@ def build_crew(
         process=Process.sequential,
         verbose=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Crew runner with per-task timing
+# ---------------------------------------------------------------------------
+
+
+def _run_with_timing(crew: Crew) -> Any:
+    """Run the crew and log per-task wall-clock durations to stderr.
+
+    Uses task_callback (fires after each task) with a checkpoint list to
+    compute elapsed time for each task.  The step_callback counts agent steps
+    per task — unusually high counts indicate internal retries.
+    """
+    checkpoints: list[float] = [time.monotonic()]
+    step_counts: list[int] = [0]  # step_counts[-1] tracks current task steps
+
+    def _step_cb(_step_output: Any) -> None:
+        step_counts[-1] += 1
+
+    def _task_cb(output: Any) -> None:
+        now = time.monotonic()
+        task_idx = len(checkpoints)  # 1-based
+        elapsed = now - checkpoints[-1]
+        steps = step_counts[-1]
+        checkpoints.append(now)
+        step_counts.append(0)  # reset for next task
+        agent = getattr(output, "agent", "?")
+        retry_note = (
+            f" [steps={steps} — possible retry]" if steps > 6 else f" [steps={steps}]"
+        )
+        print(
+            f"[crew] task={task_idx} agent={agent!r} duration_s={elapsed:.2f}{retry_note}",
+            file=sys.stderr,
+        )
+
+    crew.step_callback = _step_cb
+    crew.task_callback = _task_cb
+    result = crew.kickoff()
+    total = time.monotonic() - checkpoints[0]
+    print(f"[crew] total_duration_s={total:.2f}", file=sys.stderr)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -293,9 +352,11 @@ def main() -> None:
     if _otel_provider is not None:
         import contextlib
         from opentelemetry import trace as _otel_trace
+
         _span_cm = _otel_trace.get_tracer("crew").start_as_current_span("crew.run")
     else:
         import contextlib
+
         _span_cm = contextlib.nullcontext()
 
     with _span_cm as span:
@@ -303,7 +364,7 @@ def main() -> None:
             span.set_attribute("llm.technique", args.technique)
         _otel_inject_headers(litellm.headers)
         try:
-            result = crew.kickoff()
+            result = _run_with_timing(crew)
         except Exception as exc:
             print(f"\nCrew failed: {exc}", file=sys.stderr)
             if _otel_provider is not None:

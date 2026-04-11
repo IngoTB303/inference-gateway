@@ -1,0 +1,499 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "## Gateway — Deep Diagnostics\n\nCovers metrics **not** shown on the other gateway boards: backend-only latency vs E2E overhead, per-backend routing decisions, error breakdown, tokens/s throughput, streaming chunk counts, and request/response payload sizes.\n\n- **Backend latency** = time inside the upstream only (excludes validation + auth + response normalisation). Subtract from E2E to isolate gateway overhead.\n- **Tokens/s** = `completion_tokens / backend_duration_s` per request — the key throughput metric for comparing engine configs.\n- **Backend selection** = which backend was chosen and why (`model_match` vs `default_fallback`). High `default_fallback` means clients are sending wrong model names.\n- **Streaming chunks** = SSE data chunks forwarded per streaming request. High chunk count with low completion tokens → backend sending tiny chunks (inefficient).\n- **Payload sizes** = bytes sent to backend / bytes returned to client, useful for correlating latency with prompt length.",
+        "mode": "markdown"
+      },
+      "title": "How to read this board",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 4,
+        "x": 0,
+        "y": 5
+      },
+      "id": 2,
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      },
+      "targets": [
+        {
+          "expr": "gateway_active_requests",
+          "legendFormat": "active",
+          "refId": "A"
+        }
+      ],
+      "title": "Active Requests",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.1 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 4,
+        "x": 4,
+        "y": 5
+      },
+      "id": 3,
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(gateway_errors_total[5m])) or vector(0)",
+          "legendFormat": "errors/s",
+          "refId": "A"
+        }
+      ],
+      "title": "Error Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 4,
+        "x": 8,
+        "y": 5
+      },
+      "id": 4,
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(gateway_requests_total[5m])) or vector(0)",
+          "legendFormat": "req/s",
+          "refId": "A"
+        }
+      ],
+      "title": "Request Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          },
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "id": 5,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "expr": "sum by (backend, reason) (rate(gateway_backend_selection_total[5m]))",
+          "legendFormat": "{{backend}} / {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Backend selection rate (model_match vs default_fallback)",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Backend-only latency (excludes gateway auth/validation/normalisation overhead). Compare with E2E on the right to isolate where time is spent.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, backend, technique) (rate(gateway_backend_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 backend {{backend}} / {{technique}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, backend, technique) (rate(gateway_backend_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 backend {{backend}} / {{technique}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Backend-only latency (gateway_backend_request_duration_seconds)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Mean E2E vs mean backend-only latency overlaid. The gap between the two lines is gateway overhead (validation, auth, response normalisation).",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "sum by (technique, server_profile) (rate(gateway_request_duration_seconds_sum[5m])) / sum by (technique, server_profile) (rate(gateway_request_duration_seconds_count[5m]))",
+          "legendFormat": "E2E mean {{technique}}/{{server_profile}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (backend, technique) (rate(gateway_backend_request_duration_seconds_sum[5m])) / sum by (backend, technique) (rate(gateway_backend_request_duration_seconds_count[5m]))",
+          "legendFormat": "backend mean {{backend}}/{{technique}}",
+          "refId": "B"
+        }
+      ],
+      "title": "E2E vs backend mean latency (gap = gateway overhead)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Completion tokens generated per second by the backend. Key throughput metric for comparing engine configs (baseline vs chunked_prefill vs speculative etc).",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "axisLabel": "tokens/s"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 8,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, technique, server_profile) (rate(gateway_tokens_per_second_bucket[5m])))",
+          "legendFormat": "p95 tok/s {{technique}}/{{server_profile}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, technique, server_profile) (rate(gateway_tokens_per_second_bucket[5m])))",
+          "legendFormat": "p50 tok/s {{technique}}/{{server_profile}}",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.05, sum by (le, technique, server_profile) (rate(gateway_tokens_per_second_bucket[5m])))",
+          "legendFormat": "p5 tok/s {{technique}}/{{server_profile}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Tokens per second (completion_tokens / backend_duration)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "4xx/5xx responses broken down by status code and technique. 504 = backend timeout, 502 = backend error/unavailable, 4xx = client/auth errors.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "sum by (status_code, technique, server_profile) (rate(gateway_errors_total[5m]))",
+          "legendFormat": "HTTP {{status_code}} {{technique}}/{{server_profile}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Error rate by status code + technique",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Request payload bytes sent to the backend. Correlate with backend latency to see chunked-prefill effects — longer prompts should show higher TTFT.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "id": 10,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, backend, technique) (rate(gateway_request_size_bytes_bucket[5m])))",
+          "legendFormat": "p95 req size {{backend}}/{{technique}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, backend, technique) (rate(gateway_request_size_bytes_bucket[5m])))",
+          "legendFormat": "p50 req size {{backend}}/{{technique}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Request payload size (bytes sent to backend)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Response payload bytes returned to the client. Large responses may indicate verbose model outputs or untrimmed completions.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "id": 11,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, backend, technique) (rate(gateway_response_size_bytes_bucket[5m])))",
+          "legendFormat": "p95 resp size {{backend}}/{{technique}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, backend, technique) (rate(gateway_response_size_bytes_bucket[5m])))",
+          "legendFormat": "p50 resp size {{backend}}/{{technique}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Response payload size (bytes returned to client)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "SSE data chunks forwarded per streaming request. Very high chunk count with low token count suggests the backend is sending tiny chunks (inefficient). Empty until at least one streaming request has completed.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "noValue": "No streaming yet"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "id": 12,
+      "targets": [
+        {
+          "expr": "sum by (technique) (rate(gateway_streaming_chunks_total[5m]))",
+          "legendFormat": "chunks/s {{technique}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Streaming SSE chunks forwarded per second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "How often each backend is selected and why. High `default_fallback` rate means clients are sending model names that don't match any configured backend — check MODEL_NAME in crew.py and the name fields in config.yaml.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "id": 13,
+      "targets": [
+        {
+          "expr": "sum by (backend, reason) (rate(gateway_backend_selection_total[5m]))",
+          "legendFormat": "{{backend}} — {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Backend selection rate over time (model_match vs default_fallback)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": [
+    "gateway",
+    "diagnostics",
+    "backend"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Gateway \u2014 deep diagnostics",
+  "uid": "tt-gateway-deep",
+  "version": 1
+}
