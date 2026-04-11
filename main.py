@@ -809,34 +809,48 @@ async def _proxy_stream(
         first_chunk = True
         last_chunk_time = time.monotonic()
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            async with client.stream(
-                "POST", url, json=body, headers=_outgoing_headers(technique)
-            ) as resp:
-                if resp.status_code >= 500:
-                    latency_ms = (time.monotonic() - start) * 1000
-                    record_metrics(502, latency_ms, 0, 0, technique=technique, server_profile=server_profile)
-                    yield json.dumps({"error": "backend_error"}).encode()
-                    return
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream(
+                    "POST", url, json=body, headers=_outgoing_headers(technique)
+                ) as resp:
+                    if resp.status_code >= 500:
+                        latency_ms = (time.monotonic() - start) * 1000
+                        record_metrics(502, latency_ms, 0, 0, technique=technique, server_profile=server_profile)
+                        log.error("Backend returned %d on stream", resp.status_code)
+                        yield json.dumps({"error": "backend_error"}).encode()
+                        return
 
-                async for line in resp.aiter_lines():
-                    yield (line + "\n").encode()
-                    if line.startswith("data: ") and line != "data: [DONE]":
-                        now = time.monotonic()
-                        if first_chunk:
-                            TTFT_SECONDS.observe(now - start)
-                            first_chunk = False
-                        else:
-                            INTER_CHUNK_SECONDS.observe(now - last_chunk_time)
-                        last_chunk_time = now
-                        try:
-                            chunk = json.loads(line[6:])
-                            if usage := chunk.get("usage"):
-                                prompt_tokens = usage.get("prompt_tokens", 0)
-                                completion_tokens = usage.get("completion_tokens", 0)
-                        except (json.JSONDecodeError, AttributeError):
-                            pass
-                yield b"\n"
+                    async for line in resp.aiter_lines():
+                        yield (line + "\n").encode()
+                        if line.startswith("data: ") and line != "data: [DONE]":
+                            now = time.monotonic()
+                            if first_chunk:
+                                TTFT_SECONDS.observe(now - start)
+                                first_chunk = False
+                            else:
+                                INTER_CHUNK_SECONDS.observe(now - last_chunk_time)
+                            last_chunk_time = now
+                            try:
+                                chunk = json.loads(line[6:])
+                                if usage := chunk.get("usage"):
+                                    prompt_tokens = usage.get("prompt_tokens", 0)
+                                    completion_tokens = usage.get("completion_tokens", 0)
+                            except (json.JSONDecodeError, AttributeError):
+                                pass
+                    yield b"\n"
+        except httpx.TimeoutException:
+            latency_ms = (time.monotonic() - start) * 1000
+            record_metrics(504, latency_ms, 0, 0, technique=technique, server_profile=server_profile)
+            log.error("Backend stream timeout after %.1f ms", latency_ms)
+            yield (json.dumps({"error": "gateway_timeout"}) + "\n").encode()
+            return
+        except httpx.RequestError as exc:
+            latency_ms = (time.monotonic() - start) * 1000
+            record_metrics(502, latency_ms, 0, 0, technique=technique, server_profile=server_profile)
+            log.error("Backend stream connection error: %s", exc)
+            yield (json.dumps({"error": "backend_unavailable"}) + "\n").encode()
+            return
 
         latency_ms = (time.monotonic() - start) * 1000
         record_metrics(

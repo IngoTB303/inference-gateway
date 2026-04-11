@@ -291,7 +291,7 @@
     "to": "now"
   },
   "timezone": "browser",
-  "title": "TinyLlama \u2014 GPU, runs & cost",
-  "uid": "tt-tinyllama-ops",
+  "title": "vLLM Ops \u2014 GPU, runs & cost",
+  "uid": "vllm-ops",
   "version": 1
 }
