@@ -43,6 +43,7 @@ The server listens on `http://localhost:8080` by default.
 | `GATEWAY_METRICS_PORT` | `9101` | Port for the Prometheus metrics scrape endpoint. Set to `9102` for a second instance. |
 | `GPU_HOURLY_COST_USD` | `1.10` | Hourly GPU cost used to estimate `gateway_gpu_cost_usd_total` (A10G default). |
 | `VLLM_SERVER_PROFILE` | `default` | Server profile label attached to all Prometheus metrics (e.g. `baseline`, `optimized`, `hardcore`). |
+| `GATEWAY_METRICS_LOG_DIR` | `logs/gateway` | Directory for per-request JSONL metrics log (`gateway_metrics_YYYY-MM-DD.jsonl`). Set to `-` to disable. |
 | `BACKEND_URL` | *(unset)* | Legacy single-backend URL. Overridden by `config.yaml` when present; if both are unset the gateway runs in echo mode. |
 | `OTEL_TRACES_EXPORTER` | `none` | Set to `otlp` to enable distributed tracing. Any other value disables tracing entirely (zero overhead). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:4317` | gRPC endpoint for the OTLP collector (e.g. Jaeger). Only used when `OTEL_TRACES_EXPORTER=otlp`. |
@@ -326,6 +327,8 @@ Three container profiles are available, each a distinct vLLM configuration on an
 | `optimized` | `modal/vllm_gemma4_optimized.py` | chunked prefill + prefix caching | `optimized` |
 | `hardcore` | `modal/vllm_gemma4_hardcore.py` | optimized + fp8 KV cache, 4096-token batches | `hardcore` |
 
+All three profiles use `min_containers=0` (scale-to-zero) and a 5-minute idle timeout. Containers shut down automatically after 5 minutes of no traffic and spin back up on the next request. **Cold starts take ~2–3 minutes** (vLLM init; model weights are cached in a persistent Modal volume so no re-download is needed). The `CREW_VLLM_WAIT_S` env var can be used to poll until the backend is ready before starting a crew run.
+
 ### Deploy a container
 
 ```bash
@@ -589,4 +592,4 @@ This creates a `crew.run` root span (with `llm.technique=chunked_prefill`) that 
 
 **What broke first (and how I diagnosed it):** The first experiment run timed out. I saw `gateway_errors_total{status_code="504"}` spike to 1 in Grafana immediately. Checking `gateway_request_duration_seconds`, latency was flatlined at exactly 120 seconds — the backend timeout in `config.yaml`. This ruled out a vLLM OOM (which would have returned 5xx faster) and pointed to Modal cold-start: image pull, CUDA initialisation, and weight download exceeding the timeout. The fix was raising `scaledown_window` to 15 minutes and increasing the backend timeout to 300 seconds for initial deploys.
 
-**Next steps for production:** Three changes would have the most impact: (1) **FP8 KV cache on H100** — Hopper (compute capability ≥ 9.0) unlocks `--kv-cache-dtype fp8`, halving KV memory and allowing `max_model_len=32768` or far higher concurrency on the same VRAM budget. (2) **Modal autoscaling** — replacing `min_containers=max_containers=1` with a proper autoscaler that scales to zero when idle would make the cost SLO self-enforcing. (3) **Structured crew output** — adding a Pydantic output schema to the CrewAI Writer task would enforce the 120-word contract at the framework level and eliminate silent application-layer SLO violations.
+**Next steps for production:** Three changes would have the most impact: (1) **FP8 KV cache on H100** — Hopper (compute capability ≥ 9.0) unlocks `--kv-cache-dtype fp8`, halving KV memory and allowing `max_model_len=32768` or far higher concurrency on the same VRAM budget. (2) **Multi-replica autoscaling** — `max_containers=1` keeps costs predictable for testing but a production setup would raise the cap and let Modal scale out under concurrent load. (3) **Structured crew output** — adding a Pydantic output schema to the CrewAI Writer task would enforce the 120-word contract at the framework level and eliminate silent application-layer SLO violations.

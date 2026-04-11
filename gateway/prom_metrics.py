@@ -32,15 +32,35 @@ GPU_COST_USD_TOTAL = Counter(
     ["technique", "server_profile"],
 )
 
+BACKEND_SELECTION_TOTAL = Counter(
+    "gateway_backend_selection",
+    "Number of times each backend was selected, broken down by routing reason",
+    ["backend", "reason"],  # reason: model_match | default_fallback
+)
+
 # ---------------------------------------------------------------------------
 # Histograms
 # ---------------------------------------------------------------------------
 
 REQUEST_DURATION_SECONDS = Histogram(
     "gateway_request_duration_seconds",
-    "End-to-end request latency in seconds",
+    "End-to-end request latency in seconds (includes gateway overhead)",
     ["technique", "server_profile"],
     buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0],
+)
+
+BACKEND_REQUEST_DURATION_SECONDS = Histogram(
+    "gateway_backend_request_duration_seconds",
+    "Time spent waiting for the backend only (excludes gateway validation and auth overhead)",
+    ["backend", "technique"],
+    buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0],
+)
+
+TOKENS_PER_SECOND = Histogram(
+    "gateway_tokens_per_second",
+    "Completion tokens generated per second by the backend (throughput per request)",
+    ["technique", "server_profile"],
+    buckets=[1, 5, 10, 20, 40, 60, 80, 100, 150, 200],
 )
 
 TTFT_SECONDS = Histogram(

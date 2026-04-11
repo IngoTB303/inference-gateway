@@ -16,6 +16,6 @@ class BackendBase(ABC):
     name: str  # unique backend name, set per instance
 
     @abstractmethod
-    def generate(self, body: dict[str, Any], request_id: str) -> dict[str, Any]:
+    async def generate(self, body: dict[str, Any], request_id: str) -> dict[str, Any]:
         """Non-streaming completion. Returns an OpenAI-shaped response dict."""
         ...

@@ -24,7 +24,7 @@ class HttpBackend(BackendBase):
     def completions_url(self) -> str:
         return self.base_url + "/v1/chat/completions"
 
-    def generate(self, body: dict[str, Any], request_id: str) -> dict[str, Any]:
+    async def generate(self, body: dict[str, Any], request_id: str) -> dict[str, Any]:
         """Forward the request to the remote backend and return the response dict.
 
         Raises:
@@ -32,8 +32,8 @@ class HttpBackend(BackendBase):
             httpx.RequestError: connection-level failure
             RuntimeError: backend returned 5xx or unparseable response
         """
-        with httpx.Client(timeout=self.timeout) as client:
-            resp = client.post(self.completions_url, json=body)
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(self.completions_url, json=body)
 
         if resp.status_code >= 500:
             raise RuntimeError(f"backend_error:{resp.status_code}")

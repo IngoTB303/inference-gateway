@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -108,6 +110,9 @@ class Settings:
     vllm_server_profile: str = field(
         default_factory=lambda: os.environ.get("VLLM_SERVER_PROFILE", "default")
     )
+    metrics_log_dir: str | None = field(
+        default_factory=lambda: os.environ.get("GATEWAY_METRICS_LOG_DIR", "logs/gateway") or "logs/gateway"
+    )
 
 
 settings = Settings()
@@ -121,11 +126,14 @@ from gateway.config import GatewayConfig, load_config  # noqa: E402
 from gateway.backends.http_backend import HttpBackend  # noqa: E402
 from gateway.prom_metrics import (  # noqa: E402
     ACTIVE_REQUESTS,
+    BACKEND_REQUEST_DURATION_SECONDS,
+    BACKEND_SELECTION_TOTAL,
     ERRORS_TOTAL,
     GPU_COST_USD_TOTAL,
     INTER_CHUNK_SECONDS,
     REQUEST_DURATION_SECONDS,
     REQUESTS_TOTAL,
+    TOKENS_PER_SECOND,
     TOKENS_TOTAL,
     TTFT_SECONDS,
 )
@@ -150,6 +158,93 @@ class Metrics:
 
 
 metrics = Metrics()
+
+
+# ---------------------------------------------------------------------------
+# JSONL per-request metrics log (mirrors fullstack-inferencing schema)
+# ---------------------------------------------------------------------------
+
+
+def _smol_style_row(
+    *,
+    ttft_s: float,
+    e2e_s: float,
+    tpot_avg_s: float,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> dict[str, float | int]:
+    return {
+        "prompt_tokens_total": prompt_tokens,
+        "generation_tokens_total": completion_tokens,
+        "time_to_first_token_avg_ms": ttft_s * 1000.0,
+        "tpot_avg_ms": tpot_avg_s * 1000.0,
+        "e2e_request_latency_avg_ms": e2e_s * 1000.0,
+        "prompt_len_avg": float(prompt_tokens),
+        "prefill_latency_avg_ms": ttft_s * 1000.0,
+        "decode_latency_avg_ms": max(0.0, e2e_s - ttft_s) * 1000.0,
+    }
+
+
+def _build_metrics_log_row(
+    *,
+    technique: str,
+    server_profile: str,
+    upstream_path: str,
+    streaming: bool,
+    status_code: int,
+    trace_id: str,
+    e2e_s: float,
+    ttft_s: float,
+    tpot_avg_s: float,
+    inter_chunk_delays_s: list[float],
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> dict[str, Any]:
+    inter_ms = [d * 1000.0 for d in inter_chunk_delays_s]
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "technique": technique,
+        "server_profile": server_profile,
+        "upstream_path": upstream_path,
+        "streaming": streaming,
+        "status_code": status_code,
+        "trace_id": trace_id,
+        "e2e_latency_s": e2e_s,
+        "time_to_first_token_s": ttft_s,
+        "tpot_avg_s": tpot_avg_s,
+        "inter_chunk_count": len(inter_chunk_delays_s),
+        "inter_chunk_delay_avg_ms": (sum(inter_ms) / len(inter_ms) if inter_ms else 0.0),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "smol_style": _smol_style_row(
+            ttft_s=ttft_s,
+            e2e_s=e2e_s,
+            tpot_avg_s=tpot_avg_s,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        ),
+    }
+
+
+async def _append_gateway_metrics_log(row: dict[str, Any]) -> None:
+    """Append one JSON row to logs/gateway/gateway_metrics_YYYY-MM-DD.jsonl."""
+    mdir = settings.metrics_log_dir
+    if not mdir or mdir.lower() in ("-", "none", "false", "0"):
+        return
+    lock: asyncio.Lock | None = getattr(app.state, "metrics_log_lock", None)
+    if lock is None:
+        return
+    async with lock:
+        path = Path(mdir)
+        path.mkdir(parents=True, exist_ok=True)
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        fpath = path / f"gateway_metrics_{day}.jsonl"
+
+        def _write() -> None:
+            with open(fpath, "a", encoding="utf-8") as fp:
+                fp.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+        await asyncio.to_thread(_write)
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +436,18 @@ def check_auth(request: Request) -> None:
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Inference Gateway")
+@contextlib.asynccontextmanager
+async def _lifespan(app: FastAPI):
+    app.state.metrics_log_lock = asyncio.Lock()
+    mdir = settings.metrics_log_dir
+    if not mdir or mdir.lower() in ("-", "none", "false", "0"):
+        logger.info("JSONL request metrics logging disabled.")
+    else:
+        logger.info("JSONL metrics log dir: %s", Path(mdir).resolve())
+    yield
+
+
+app = FastAPI(title="Inference Gateway", lifespan=_lifespan)
 
 
 @app.exception_handler(HTTPException)
@@ -613,6 +719,24 @@ async def _handle_echo(
     )
     log.info("POST /v1/chat/completions status=200 latency_ms=%.1f mode=echo", latency_ms)
 
+    e2e_s = latency_ms / 1000.0
+    await _append_gateway_metrics_log(
+        _build_metrics_log_row(
+            technique=technique,
+            server_profile=server_profile,
+            upstream_path="/v1/chat/completions",
+            streaming=stream,
+            status_code=200,
+            trace_id=request_id,
+            e2e_s=e2e_s,
+            ttft_s=e2e_s,
+            tpot_avg_s=(e2e_s / completion_tokens) if completion_tokens > 0 else 0.0,
+            inter_chunk_delays_s=[],
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+    )
+
     if stream:
         chunk = {
             "id": request_id,
@@ -663,6 +787,10 @@ async def _handle_with_config(
     if _OTEL_AVAILABLE:
         _otel_trace.get_current_span().set_attribute("backend", backend.name)
 
+    # Record which backend was selected and why
+    reason = "model_match" if (model and model in {b.name for b in gateway_config.all_backends} and model != gateway_config.default_backend.name) else "default_fallback"
+    BACKEND_SELECTION_TOTAL.labels(backend=backend.name, reason=reason).inc()
+
     backend_body = {k: v for k, v in forward_body.items() if k != "model"}
     if isinstance(backend, HttpBackend) and backend.model is not None:
         backend_body["model"] = backend.model
@@ -677,14 +805,16 @@ async def _handle_with_config(
                 log,
                 technique=technique,
                 server_profile=server_profile,
+                backend_name=backend.name,
             )
         return await _handle_echo(
             request_id, prompt, stream, start, log,
             technique=technique, server_profile=server_profile,
         )
 
+    backend_start = time.monotonic()
     try:
-        data = backend.generate(backend_body, request_id)
+        data = await backend.generate(backend_body, request_id)
     except httpx.TimeoutException:
         latency_ms = (time.monotonic() - start) * 1000
         record_metrics(504, latency_ms, 0, 0, technique=technique, server_profile=server_profile)
@@ -701,19 +831,45 @@ async def _handle_with_config(
         log.error("Backend %s error: %s", backend.name, exc)
         return JSONResponse({"error": "backend_error"}, status_code=502, headers={"X-Request-ID": request_id})
 
+    backend_duration_s = time.monotonic() - backend_start
+    BACKEND_REQUEST_DURATION_SECONDS.labels(backend=backend.name, technique=technique).observe(backend_duration_s)
+
     latency_ms = (time.monotonic() - start) * 1000
     data = _normalize_response(data, request_id, latency_ms=latency_ms)
     data["backend"] = backend.name
 
     usage = data["usage"]
+    completion_tokens = usage.get("completion_tokens", 0)
     record_metrics(
         200, latency_ms,
-        usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0),
+        usage.get("prompt_tokens", 0), completion_tokens,
         technique=technique, server_profile=server_profile,
     )
+    if backend_duration_s > 0 and completion_tokens > 0:
+        TOKENS_PER_SECOND.labels(technique=technique, server_profile=server_profile).observe(
+            completion_tokens / backend_duration_s
+        )
     log.info(
-        "POST /v1/chat/completions status=200 latency_ms=%.1f mode=config backend=%s",
-        latency_ms, backend.name,
+        "POST /v1/chat/completions status=200 latency_ms=%.1f backend_ms=%.1f mode=config backend=%s",
+        latency_ms, backend_duration_s * 1000, backend.name,
+    )
+    e2e_s = latency_ms / 1000.0
+    tpot_avg_s = (backend_duration_s / completion_tokens) if completion_tokens > 0 else 0.0
+    await _append_gateway_metrics_log(
+        _build_metrics_log_row(
+            technique=technique,
+            server_profile=server_profile,
+            upstream_path="/v1/chat/completions",
+            streaming=False,
+            status_code=200,
+            trace_id=request_id,
+            e2e_s=e2e_s,
+            ttft_s=e2e_s,
+            tpot_avg_s=tpot_avg_s,
+            inter_chunk_delays_s=[],
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=completion_tokens,
+        )
     )
     return JSONResponse(data, headers={"X-Request-ID": request_id})
 
@@ -750,7 +906,9 @@ async def _proxy_non_stream(
     *,
     technique: str = "baseline",
     server_profile: str = "default",
+    backend_name: str = "legacy",
 ) -> Response:
+    backend_start = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, json=body, headers=_outgoing_headers(technique))
@@ -765,6 +923,8 @@ async def _proxy_non_stream(
         log.error("Backend connection error: %s", exc)
         return JSONResponse({"error": "backend_unavailable"}, status_code=502, headers={"X-Request-ID": request_id})
 
+    backend_duration_s = time.monotonic() - backend_start
+
     if resp.status_code >= 500:
         latency_ms = (time.monotonic() - start) * 1000
         record_metrics(502, latency_ms, 0, 0, technique=technique, server_profile=server_profile)
@@ -778,17 +938,42 @@ async def _proxy_non_stream(
         record_metrics(502, latency_ms, 0, 0, technique=technique, server_profile=server_profile)
         return JSONResponse({"error": "backend_invalid_response"}, status_code=502, headers={"X-Request-ID": request_id})
 
+    BACKEND_REQUEST_DURATION_SECONDS.labels(backend=backend_name, technique=technique).observe(backend_duration_s)
+
     latency_ms = (time.monotonic() - start) * 1000
     data = _normalize_response(data, request_id, latency_ms=latency_ms)
     usage = data["usage"]
+    completion_tokens = usage.get("completion_tokens", 0)
     record_metrics(
         resp.status_code, latency_ms,
-        usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0),
+        usage.get("prompt_tokens", 0), completion_tokens,
         technique=technique, server_profile=server_profile,
     )
+    if backend_duration_s > 0 and completion_tokens > 0:
+        TOKENS_PER_SECOND.labels(technique=technique, server_profile=server_profile).observe(
+            completion_tokens / backend_duration_s
+        )
     log.info(
-        "POST /v1/chat/completions status=%d latency_ms=%.1f mode=backend",
-        resp.status_code, latency_ms,
+        "POST /v1/chat/completions status=%d latency_ms=%.1f backend_ms=%.1f mode=backend",
+        resp.status_code, latency_ms, backend_duration_s * 1000,
+    )
+    e2e_s = latency_ms / 1000.0
+    tpot_avg_s = (backend_duration_s / completion_tokens) if completion_tokens > 0 else 0.0
+    await _append_gateway_metrics_log(
+        _build_metrics_log_row(
+            technique=technique,
+            server_profile=server_profile,
+            upstream_path="/v1/chat/completions",
+            streaming=False,
+            status_code=resp.status_code,
+            trace_id=request_id,
+            e2e_s=e2e_s,
+            ttft_s=e2e_s,
+            tpot_avg_s=tpot_avg_s,
+            inter_chunk_delays_s=[],
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=completion_tokens,
+        )
     )
     return JSONResponse(data, status_code=resp.status_code, headers={"X-Request-ID": request_id})
 
@@ -802,12 +987,14 @@ async def _proxy_stream(
     *,
     technique: str = "baseline",
     server_profile: str = "default",
+    backend_name: str = "legacy",
 ) -> Response:
     async def _stream_gen() -> AsyncGenerator[bytes, None]:
         prompt_tokens = 0
         completion_tokens = 0
         first_chunk = True
         last_chunk_time = time.monotonic()
+        inter_chunk_delays: list[float] = []
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -821,15 +1008,19 @@ async def _proxy_stream(
                         yield json.dumps({"error": "backend_error"}).encode()
                         return
 
+                    ttft_s: float | None = None
                     async for line in resp.aiter_lines():
                         yield (line + "\n").encode()
                         if line.startswith("data: ") and line != "data: [DONE]":
                             now = time.monotonic()
                             if first_chunk:
-                                TTFT_SECONDS.observe(now - start)
+                                ttft_s = now - start
+                                TTFT_SECONDS.observe(ttft_s)
                                 first_chunk = False
                             else:
-                                INTER_CHUNK_SECONDS.observe(now - last_chunk_time)
+                                gap = now - last_chunk_time
+                                INTER_CHUNK_SECONDS.observe(gap)
+                                inter_chunk_delays.append(gap)
                             last_chunk_time = now
                             try:
                                 chunk = json.loads(line[6:])
@@ -853,6 +1044,14 @@ async def _proxy_stream(
             return
 
         latency_ms = (time.monotonic() - start) * 1000
+        e2e_s = latency_ms / 1000.0
+        # Use TTFT as a proxy for backend request duration on streaming paths
+        if ttft_s is not None:
+            BACKEND_REQUEST_DURATION_SECONDS.labels(backend=backend_name, technique=technique).observe(ttft_s)
+        if latency_ms > 0 and completion_tokens > 0:
+            TOKENS_PER_SECOND.labels(technique=technique, server_profile=server_profile).observe(
+                completion_tokens / (latency_ms / 1000)
+            )
         record_metrics(
             200, latency_ms, prompt_tokens, completion_tokens,
             technique=technique, server_profile=server_profile,
@@ -860,6 +1059,30 @@ async def _proxy_stream(
         log.info(
             "POST /v1/chat/completions status=200 latency_ms=%.1f mode=backend-stream",
             latency_ms,
+        )
+        actual_ttft_s = ttft_s if ttft_s is not None else e2e_s
+        tpot_avg_s: float
+        if inter_chunk_delays:
+            tpot_avg_s = sum(inter_chunk_delays) / len(inter_chunk_delays)
+        elif completion_tokens > 0 and e2e_s > 0:
+            tpot_avg_s = e2e_s / completion_tokens
+        else:
+            tpot_avg_s = 0.0
+        await _append_gateway_metrics_log(
+            _build_metrics_log_row(
+                technique=technique,
+                server_profile=server_profile,
+                upstream_path="/v1/chat/completions",
+                streaming=True,
+                status_code=200,
+                trace_id=request_id,
+                e2e_s=e2e_s,
+                ttft_s=actual_ttft_s,
+                tpot_avg_s=tpot_avg_s,
+                inter_chunk_delays_s=inter_chunk_delays,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
         )
 
     return StreamingResponse(
