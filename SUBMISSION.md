@@ -167,7 +167,7 @@ docker compose up -d
 | Grafana | http://localhost:3000 (admin / admin) |
 | Jaeger | http://localhost:16686 |
 
-Four dashboards are auto-provisioned: **Gateway Proxy**, **Overview**, **Technique Cost**, **TinyLlama Ops**.
+Four dashboards are auto-provisioned: **Gateway Proxy**, **Overview**, **Technique Cost**, \*\*vLLM Ops\*\*.
 
 ---
 

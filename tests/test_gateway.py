@@ -966,6 +966,40 @@ def test_streaming_logs_usage(backend_gateway):
     assert metrics_body["completion_tokens_total"] == 3
 
 
+@respx.mock
+def test_streaming_timeout_yields_error(backend_gateway):
+    """Streaming path records 504 metrics and yields error JSON when backend times out."""
+    respx.post("http://test-backend/v1/chat/completions").mock(
+        side_effect=httpx.TimeoutException("timed out")
+    )
+
+    payload = {**COMPLETION_PAYLOAD, "stream": True}
+    resp = backend_gateway.post("/v1/chat/completions", json=payload)
+
+    assert resp.status_code == 200  # StreamingResponse headers already sent
+    assert b"gateway_timeout" in resp.content
+
+    _, metrics_body = _get(backend_gateway, "/metrics")
+    assert metrics_body["error_count"] >= 1
+
+
+@respx.mock
+def test_streaming_connection_error_yields_error(backend_gateway):
+    """Streaming path records 502 metrics and yields error JSON on connection failure."""
+    respx.post("http://test-backend/v1/chat/completions").mock(
+        side_effect=httpx.ConnectError("connection refused")
+    )
+
+    payload = {**COMPLETION_PAYLOAD, "stream": True}
+    resp = backend_gateway.post("/v1/chat/completions", json=payload)
+
+    assert resp.status_code == 200  # StreamingResponse headers already sent
+    assert b"backend_unavailable" in resp.content
+
+    _, metrics_body = _get(backend_gateway, "/metrics")
+    assert metrics_body["error_count"] >= 1
+
+
 # ---------------------------------------------------------------------------
 # Latency in usage (#10)
 # ---------------------------------------------------------------------------
