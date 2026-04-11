@@ -6,7 +6,14 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "title": "Jaeger UI",
+      "type": "link",
+      "url": "http://localhost:16686",
+      "icon": "external link"
+    }
+  ],
   "panels": [
     {
       "datasource": {
@@ -476,6 +483,86 @@
       ],
       "title": "Backend selection rate over time (model_match vs default_fallback)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "jaeger",
+        "uid": "jaeger"
+      },
+      "description": "Live only when OTEL_TRACES_EXPORTER=otlp (see README). Lists recent chat.completions traces from the inference-gateway service — traceID, name, start time, and duration. Click any row in the Jaeger UI link to explore the full span hierarchy (validation.done → backend.selected → backend.request.start → stream.first_chunk / backend.response.complete → stream.complete).",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "displayMode": "auto",
+            "filterable": true
+          },
+          "links": [
+            {
+              "title": "Open in Jaeger UI",
+              "url": "http://localhost:16686/trace/${__value.raw}",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "traceID" },
+            "properties": [
+              { "id": "custom.width", "value": 280 },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open in Jaeger UI",
+                    "url": "http://localhost:16686/trace/${__value.raw}",
+                    "targetBlank": true
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "duration" },
+            "properties": [
+              { "id": "unit", "value": "ms" },
+              { "id": "custom.width", "value": 100 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "startTime" },
+            "properties": [
+              { "id": "custom.width", "value": 180 }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "id": 14,
+      "options": {
+        "footer": { "show": false },
+        "showHeader": true,
+        "sortBy": [{ "displayName": "startTime", "desc": true }]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "jaeger",
+            "uid": "jaeger"
+          },
+          "queryType": "search",
+          "refId": "A",
+          "service": "inference-gateway",
+          "operation": "chat.completions",
+          "limit": 20
+        }
+      ],
+      "title": "Recent traces — inference-gateway · chat.completions (click traceID to open in Jaeger UI)",
+      "type": "table"
     }
   ],
   "refresh": "10s",
@@ -495,5 +582,5 @@
   "timezone": "browser",
   "title": "Gateway \u2014 deep diagnostics",
   "uid": "tt-gateway-deep",
-  "version": 1
+  "version": 2
 }
