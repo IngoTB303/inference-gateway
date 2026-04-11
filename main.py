@@ -84,6 +84,15 @@ def _span(name: str, carrier: dict | None = None, **attrs):
         yield s
 
 
+def _span_event(name: str, **attrs) -> None:
+    """Record a named event on the current active span. No-op when OTel is off."""
+    if not _OTEL_AVAILABLE:
+        return
+    _otel_trace.get_current_span().add_event(
+        name, attributes={k: str(v) for k, v in attrs.items()}
+    )
+
+
 def _outgoing_headers(technique: str) -> dict[str, str]:
     """Build upstream request headers, injecting W3C trace context when OTel is active."""
     headers: dict[str, str] = {"X-Technique": technique}
@@ -686,6 +695,8 @@ async def _handle_completions(
     stream = body.get("stream", False)
     model = body.get("model")
 
+    _span_event("validation.done", model=str(model), stream=str(stream))
+
     prompt = ""
     for msg in reversed(messages):
         if msg.get("role") == "user":
@@ -845,6 +856,7 @@ async def _handle_with_config(
         else "default_fallback"
     )
     BACKEND_SELECTION_TOTAL.labels(backend=backend.name, reason=reason).inc()
+    _span_event("backend.selected", backend=backend.name, reason=reason)
 
     backend_body = {k: v for k, v in forward_body.items() if k != "model"}
     if isinstance(backend, HttpBackend) and backend.model is not None:
@@ -873,6 +885,7 @@ async def _handle_with_config(
         )
 
     backend_start = time.monotonic()
+    _span_event("backend.request.start", backend=backend.name)
     try:
         data = await backend.generate(backend_body, request_id)
     except httpx.TimeoutException:
@@ -939,6 +952,12 @@ async def _handle_with_config(
         TOKENS_PER_SECOND.labels(
             technique=technique, server_profile=server_profile
         ).observe(completion_tokens / backend_duration_s)
+    _span_event(
+        "backend.response.complete",
+        backend=backend.name,
+        completion_tokens=str(completion_tokens),
+        backend_duration_ms=f"{backend_duration_s * 1000:.1f}",
+    )
     log.info(
         "POST /v1/chat/completions status=200 latency_ms=%.1f backend_ms=%.1f mode=config backend=%s",
         latency_ms,
@@ -1013,6 +1032,7 @@ async def _proxy_non_stream(
     backend_name: str = "legacy",
 ) -> Response:
     backend_start = time.monotonic()
+    _span_event("backend.request.start", backend=backend_name)
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
@@ -1094,6 +1114,13 @@ async def _proxy_non_stream(
         TOKENS_PER_SECOND.labels(
             technique=technique, server_profile=server_profile
         ).observe(completion_tokens / backend_duration_s)
+    _span_event(
+        "backend.response.complete",
+        backend=backend_name,
+        status_code=str(resp.status_code),
+        completion_tokens=str(completion_tokens),
+        backend_duration_ms=f"{backend_duration_s * 1000:.1f}",
+    )
     log.info(
         "POST /v1/chat/completions status=%d latency_ms=%.1f backend_ms=%.1f mode=backend",
         resp.status_code,
@@ -1175,6 +1202,9 @@ async def _proxy_stream(
                             if first_chunk:
                                 ttft_s = now - start
                                 TTFT_SECONDS.observe(ttft_s)
+                                _span_event(
+                                    "stream.first_chunk", ttft_s=f"{ttft_s:.3f}"
+                                )
                                 first_chunk = False
                             else:
                                 gap = now - last_chunk_time
@@ -1233,6 +1263,12 @@ async def _proxy_stream(
             response_bytes
         )
         STREAMING_CHUNKS_TOTAL.labels(technique=technique).inc(chunk_count)
+        _span_event(
+            "stream.complete",
+            chunks=str(chunk_count),
+            completion_tokens=str(completion_tokens),
+            e2e_ms=f"{latency_ms:.1f}",
+        )
         if latency_ms > 0 and completion_tokens > 0:
             TOKENS_PER_SECOND.labels(
                 technique=technique, server_profile=server_profile

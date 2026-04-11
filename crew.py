@@ -240,14 +240,14 @@ def build_crew(
     researcher = Agent(
         role="Researcher",
         goal="Collect concise facts for a short brief.",
-        backstory="You summarize sources clearly in 3–5 bullet points.",
+        backstory="You summarize sources clearly in less than 1000 words, focused on bullet points.",
         llm=llm,
         verbose=True,
     )
     writer = Agent(
         role="Writer",
         goal="Turn research into a tight paragraph.",
-        backstory="You write clear prose under 120 words.",
+        backstory="You write clear prose under 120 words. You can use bullet points and emojis from the research, but no fluff. Write for a student audience. Use ELI5 style.",
         llm=llm,
         verbose=True,
     )

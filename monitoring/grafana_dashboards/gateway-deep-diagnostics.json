@@ -6,7 +6,14 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "title": "Jaeger UI",
+      "type": "link",
+      "url": "http://localhost:16686",
+      "icon": "external link"
+    }
+  ],
   "panels": [
     {
       "datasource": {
@@ -476,6 +483,43 @@
       ],
       "title": "Backend selection rate over time (model_match vs default_fallback)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "jaeger",
+        "uid": "jaeger"
+      },
+      "description": "Live only when OTEL_TRACES_EXPORTER=otlp (see README). Shows crew→gateway span hierarchy with events: validation.done · backend.selected · backend.request.start · stream.first_chunk / backend.response.complete · stream.complete. The gateway→vLLM hop is a gap — vLLM 0.19 does not consume traceparent.",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "id": 14,
+      "options": {
+        "dedupStrategy": "none",
+        "enableNodeGraph": true,
+        "showStackTraces": false,
+        "spanBar": {
+          "type": "duration"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "jaeger",
+            "uid": "jaeger"
+          },
+          "queryType": "search",
+          "refId": "A",
+          "service": "inference-gateway",
+          "operation": "chat.completions",
+          "limit": 20
+        }
+      ],
+      "title": "Distributed traces — inference-gateway · chat.completions (requires OTEL_TRACES_EXPORTER=otlp)",
+      "type": "traces"
     }
   ],
   "refresh": "10s",
