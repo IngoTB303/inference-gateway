@@ -511,10 +511,15 @@ curl -s http://localhost:8780/nginx_status
 `nginx-gateway-lb.conf` uses a custom `log_format gateway` that records `upstream_response_time` and `request_time` for every proxied request:
 
 ```
-192.168.1.1 - [11/Apr/2026:12:00:01 +0000] "POST /v1/chat/completions HTTP/1.1" 200 upstream_response_time=4.231 request_time=4.232 bytes_sent=1842
+127.0.0.1 - [11/Apr/2026:12:00:01 +0200] "POST /v1/chat/completions HTTP/1.1" 200 upstream_response_time=4.231 request_time=4.232 bytes_sent=1842
 ```
 
-Logs are written to `/tmp/nginx-gateway-lb.access.log`. `upstream_response_time` is the gateway-side view of latency — useful for cross-validating `gateway_request_duration_seconds`.
+Logs are written to `/tmp/nginx-gateway-lb.access.log`. `upstream_response_time` is the LB-side view of gateway latency — useful for cross-validating `gateway_request_duration_seconds`.
+
+> **Config reload:** `nginx -p /tmp -s reload` may pick up the system `nginx.conf` instead of the project config on some Linux installs. Use SIGHUP directly instead:
+> ```bash
+> kill -HUP $(cat /tmp/nginx-gateway-lb.pid)
+> ```
 
 ### Single-gateway mode
 
