@@ -386,6 +386,21 @@ def record_metrics(
 
 
 # ---------------------------------------------------------------------------
+# Token estimation (gateway-side guard for max_model_len)
+# ---------------------------------------------------------------------------
+
+
+def _estimate_prompt_tokens(messages: list[dict[str, Any]]) -> int:
+    """Rough heuristic: 1 token ≈ 4 characters (GPT-style rule of thumb).
+
+    No tokenizer dependency — used only to catch obviously oversized requests
+    before they reach the inference engine and trigger a KV-cache OOM.
+    """
+    total_chars = sum(len(str(m.get("content", ""))) for m in messages)
+    return max(1, total_chars // 4)
+
+
+# ---------------------------------------------------------------------------
 # Request validation
 # ---------------------------------------------------------------------------
 
@@ -861,6 +876,35 @@ async def _handle_with_config(
     backend_body = {k: v for k, v in forward_body.items() if k != "model"}
     if isinstance(backend, HttpBackend) and backend.model is not None:
         backend_body["model"] = backend.model
+
+    # Token-limit guard: reject before forwarding to prevent KV-cache OOM
+    if isinstance(backend, HttpBackend) and backend.max_model_len is not None:
+        est_tokens = _estimate_prompt_tokens(forward_body.get("messages", []))
+        est_tokens += forward_body.get("max_tokens", 0)
+        if est_tokens > backend.max_model_len:
+            latency_ms = (time.monotonic() - start) * 1000
+            record_metrics(
+                400, latency_ms, 0, 0, technique=technique, server_profile=server_profile
+            )
+            log.warning(
+                "Request rejected: estimated %d tokens exceeds backend '%s' limit %d",
+                est_tokens,
+                backend.name,
+                backend.max_model_len,
+            )
+            return JSONResponse(
+                {
+                    "error": "context_too_long",
+                    "message": (
+                        f"Estimated {est_tokens} tokens exceeds backend limit of "
+                        f"{backend.max_model_len}. Shorten your messages or reduce max_tokens."
+                    ),
+                    "estimated_tokens": est_tokens,
+                    "max_model_len": backend.max_model_len,
+                },
+                status_code=400,
+                headers={"X-Request-ID": request_id},
+            )
 
     if stream:
         if isinstance(backend, HttpBackend):

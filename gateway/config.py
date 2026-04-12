@@ -24,7 +24,12 @@ def _make_backend(entry: dict[str, Any]) -> BackendBase:
         url = entry["url"]
         timeout = float(entry.get("timeout", 60.0))
         model = entry.get("model")  # optional: forwarded as "model" in request body
-        return HttpBackend(name=name, url=url, timeout=timeout, model=model)
+        max_model_len = entry.get("max_model_len")  # optional: token limit guard
+        if max_model_len is not None:
+            max_model_len = int(max_model_len)
+        return HttpBackend(
+            name=name, url=url, timeout=timeout, model=model, max_model_len=max_model_len
+        )
 
     raise ValueError(f"Unknown backend type: {backend_type!r}")
 

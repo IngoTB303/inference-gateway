@@ -737,6 +737,110 @@ def test_no_config_fallback(tmp_path, monkeypatch):
     assert isinstance(cfg.default_backend, HttpBackend)
 
 
+def test_config_yaml_max_model_len_parsed():
+    """load_config() reads max_model_len from config.yaml into HttpBackend instances."""
+    from gateway.config import load_config
+
+    cfg = load_config("config.yaml")
+    vllm_backends = [
+        b for b in cfg.all_backends if isinstance(b, HttpBackend) and "modal-gemma4" in b.name
+    ]
+    assert vllm_backends, "Expected at least one modal-gemma4 HttpBackend in config.yaml"
+    for b in vllm_backends:
+        assert b.max_model_len == 8192, (
+            f"{b.name}: expected max_model_len=8192, got {b.max_model_len}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Token limit guard (#57)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def token_limit_gateway(monkeypatch):
+    """Gateway with an HttpBackend that has max_model_len=100."""
+    from gateway.backends.echo import EchoBackend
+
+    limited = HttpBackend(name="limited", url="http://test-backend", max_model_len=100)
+    echo = EchoBackend(name="local")
+    config = GatewayConfig(backends=[limited, echo], default_backend=limited)
+
+    monkeypatch.setattr(main, "gateway_config", config)
+    monkeypatch.setattr(main.settings, "backend_url", None)
+    monkeypatch.setattr(main.settings, "api_key", None)
+    for f in ("request_count", "error_count", "prompt_tokens_total", "completion_tokens_total"):
+        monkeypatch.setattr(main.metrics, f, 0)
+    monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
+
+    with TestClient(main.app, raise_server_exceptions=False) as client:
+        yield client
+
+
+@respx.mock
+def test_token_limit_under_limit_passes(token_limit_gateway):
+    """Requests well under max_model_len are forwarded normally."""
+    respx.post("http://test-backend/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+            },
+        )
+    )
+    status, body, _ = _post(
+        token_limit_gateway,
+        "/v1/chat/completions",
+        {"model": "limited", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert status == 200
+
+
+def test_token_limit_over_limit_rejected(token_limit_gateway):
+    """Requests whose estimated tokens exceed max_model_len get 400 context_too_long."""
+    # ~400 chars / 4 = ~100 tokens → exactly at limit; add max_tokens to push over
+    long_content = "word " * 80  # 400 chars → ~100 estimated tokens
+    status, body, _ = _post(
+        token_limit_gateway,
+        "/v1/chat/completions",
+        {
+            "model": "limited",
+            "messages": [{"role": "user", "content": long_content}],
+            "max_tokens": 50,  # 100 + 50 = 150 > 100 limit
+        },
+    )
+    assert status == 400
+    assert body["error"] == "context_too_long"
+    assert "estimated_tokens" in body
+    assert body["max_model_len"] == 100
+
+
+def test_token_limit_no_limit_set_passes(monkeypatch):
+    """HttpBackend without max_model_len set passes requests through without checking."""
+    from gateway.backends.echo import EchoBackend
+
+    unlimited = HttpBackend(name="unlimited", url="http://test-backend")  # max_model_len=None
+    echo = EchoBackend(name="local")
+    config = GatewayConfig(backends=[unlimited, echo], default_backend=echo)
+
+    monkeypatch.setattr(main, "gateway_config", config)
+    monkeypatch.setattr(main.settings, "backend_url", None)
+    monkeypatch.setattr(main.settings, "api_key", None)
+    for f in ("request_count", "error_count", "prompt_tokens_total", "completion_tokens_total"):
+        monkeypatch.setattr(main.metrics, f, 0)
+    monkeypatch.setattr(main.metrics, "total_latency_ms", 0.0)
+
+    with TestClient(main.app, raise_server_exceptions=False) as client:
+        # Routes to echo because model name doesn't match "unlimited"
+        status, body, _ = _post(
+            client,
+            "/v1/chat/completions",
+            {"messages": [{"role": "user", "content": "word " * 10_000}]},
+        )
+    assert status == 200  # echo backend, no limit checked
+
+
 # ---------------------------------------------------------------------------
 # Auth and policy hooks (#2)
 # ---------------------------------------------------------------------------

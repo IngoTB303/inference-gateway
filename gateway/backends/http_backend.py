@@ -13,12 +13,18 @@ class HttpBackend(BackendBase):
     """POSTs to a configured URL that speaks the OpenAI API."""
 
     def __init__(
-        self, name: str, url: str, timeout: float = 60.0, model: str | None = None
+        self,
+        name: str,
+        url: str,
+        timeout: float = 60.0,
+        model: str | None = None,
+        max_model_len: int | None = None,
     ) -> None:
         self.name = name
         self.base_url = url.rstrip("/")
         self.timeout = timeout
         self.model = model  # if set, injected as "model" in the forwarded body
+        self.max_model_len = max_model_len  # if set, gateway rejects oversized requests
 
     @property
     def completions_url(self) -> str:

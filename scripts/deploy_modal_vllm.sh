@@ -37,6 +37,9 @@ echo "Deploying $MODAL_FILE ..."
 # modal is in the 'deploy' dependency group — use 'uv run --group deploy'
 uv run --group deploy modal deploy "$MODAL_FILE"
 
+# Extract MAX_MODEL_LEN from the modal Python file so the config hint stays in sync.
+MAX_MODEL_LEN=$(grep -m1 'MAX_MODEL_LEN\s*=' "$MODAL_FILE" | grep -oE '[0-9]+')
+
 echo ""
 echo "Done. Paste the URL above into config.yaml:"
 echo "  - name: modal-gemma4-${PROFILE}"
@@ -44,5 +47,6 @@ echo "    type: http"
 echo "    url: <URL from above>"
 echo "    timeout: 120"
 echo "    model: gemma-4-e2b-it"
+echo "    max_model_len: ${MAX_MODEL_LEN}  # must match MAX_MODEL_LEN in ${MODAL_FILE##*/}"
 echo ""
 echo "Then verify: curl http://localhost:8080/v1/backends"
