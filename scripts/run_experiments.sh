@@ -187,6 +187,7 @@ for profile in "${PROFILES[@]}"; do
     crew_exit=0
     if MODEL_NAME="$backend" \
        CREW_VLLM_WAIT_S=0 \
+       CREW_LLM_STREAM=false \
        uv run --group crew --group otel python "$REPO_ROOT/crew.py" \
          --topic "$TOPIC" \
          --technique "$technique"; then
