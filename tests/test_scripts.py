@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import csv
+import re
 import subprocess
 from pathlib import Path
+
+import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
@@ -350,3 +353,55 @@ class TestRunExperimentsCSVOutput:
     def test_csv_path_printed_in_summary(self):
         # The summary block must tell the user where results were written
         assert "CSV_OUT" in self.src and "Results CSV" in self.src
+
+
+# ---------------------------------------------------------------------------
+# max_model_len sync — modal Python files must match config.yaml
+# ---------------------------------------------------------------------------
+
+
+def _extract_max_model_len(modal_path: Path) -> int:
+    """Parse MAX_MODEL_LEN = <int> from a modal Python file."""
+    text = modal_path.read_text()
+    match = re.search(r"^\s*MAX_MODEL_LEN\s*=\s*(\d+)", text, re.MULTILINE)
+    assert match, f"MAX_MODEL_LEN not found in {modal_path.name}"
+    return int(match.group(1))
+
+
+def _config_yaml_max_model_len(backend_name: str) -> int | None:
+    """Return max_model_len for a named backend from config.yaml, or None."""
+    config_path = REPO_ROOT / "config.yaml"
+    with config_path.open() as f:
+        raw = yaml.safe_load(f)
+    for entry in raw.get("backends", []):
+        if entry.get("name") == backend_name:
+            return entry.get("max_model_len")
+    raise KeyError(f"Backend '{backend_name}' not found in config.yaml")
+
+
+class TestMaxModelLenSync:
+    """Ensure max_model_len in config.yaml matches MAX_MODEL_LEN in each modal file."""
+
+    def test_standard_in_sync(self):
+        modal_val = _extract_max_model_len(MODAL / "vllm_gemma4.py")
+        config_val = _config_yaml_max_model_len("modal-gemma4-standard")
+        assert config_val == modal_val, (
+            f"modal-gemma4-standard: config.yaml has max_model_len={config_val} "
+            f"but vllm_gemma4.py has MAX_MODEL_LEN={modal_val}"
+        )
+
+    def test_optimized_in_sync(self):
+        modal_val = _extract_max_model_len(MODAL / "vllm_gemma4_optimized.py")
+        config_val = _config_yaml_max_model_len("modal-gemma4-optimized")
+        assert config_val == modal_val, (
+            f"modal-gemma4-optimized: config.yaml has max_model_len={config_val} "
+            f"but vllm_gemma4_optimized.py has MAX_MODEL_LEN={modal_val}"
+        )
+
+    def test_hardcore_in_sync(self):
+        modal_val = _extract_max_model_len(MODAL / "vllm_gemma4_hardcore.py")
+        config_val = _config_yaml_max_model_len("modal-gemma4-hardcore")
+        assert config_val == modal_val, (
+            f"modal-gemma4-hardcore: config.yaml has max_model_len={config_val} "
+            f"but vllm_gemma4_hardcore.py has MAX_MODEL_LEN={modal_val}"
+        )
