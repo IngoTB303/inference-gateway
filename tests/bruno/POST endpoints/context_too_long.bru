@@ -10,6 +10,10 @@ post {
   auth: inherit
 }
 
+// The guard checks: estimated_prompt_tokens + max_tokens > max_model_len
+// "hi" → ~1 prompt token; max_tokens=8192 → total 8193 > 8192 limit → rejected.
+// max_model_len covers input AND output together, so requesting 8192 output tokens
+// leaves no room for any input, even a single word.
 body:json {
   {
     "model": "modal-gemma4-standard",
