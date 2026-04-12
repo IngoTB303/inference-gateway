@@ -31,16 +31,26 @@ scrape_configs:
       - targets: ["nginx-exporter:9113"]
     metrics_path: /metrics
 
+  # vLLM scrape jobs — each target is labelled with both `server_profile`
+  # (standard / optimized / hardcore) and `technique` (the feature-set label
+  # used throughout the gateway) so Grafana panels can colour + legend per
+  # deployment without having to infer from the `job` name.
   - job_name: vllm_standard
     scheme: https
     static_configs:
       - targets: ["ingo-villnow--vllm-gemma4-standard-serve.modal.run"]
+        labels:
+          server_profile: standard
+          technique: baseline
     metrics_path: /metrics
 
   - job_name: vllm_optimized
     scheme: https
     static_configs:
       - targets: ["ingo-villnow--vllm-gemma4-optimized-serve.modal.run"]
+        labels:
+          server_profile: optimized
+          technique: chunked-prefill
     metrics_path: /metrics
 
   # Update target after deploying: bash scripts/deploy_modal_vllm.sh hardcore
@@ -48,4 +58,7 @@ scrape_configs:
     scheme: https
     static_configs:
       - targets: ["ingo-villnow--vllm-gemma4-hardcore-serve.modal.run"]
+        labels:
+          server_profile: hardcore
+          technique: chunked-prefill+prefix-caching+large-batch
     metrics_path: /metrics

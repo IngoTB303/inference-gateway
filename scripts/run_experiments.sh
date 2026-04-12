@@ -9,7 +9,12 @@
 # For each profile the script:
 #   1. Optionally deploys the Modal container (--deploy).
 #   2. Waits until the backend is reachable through the gateway.
-#   3. Runs crew.py N times with the matching X-Technique label.
+#   3. Runs crew.py N times with stream=false, then N times with stream=true.
+#      The X-Technique label matches the server profile so gateway/Prometheus can
+#      slice metrics by the actual vLLM configuration:
+#         standard  → X-Technique: baseline
+#         optimized → X-Technique: chunked-prefill
+#         hardcore  → X-Technique: chunked-prefill+prefix-caching+large-batch
 #   4. Prints a per-technique summary and an overall comparison table.
 #
 # Usage:
@@ -73,7 +78,7 @@ IFS=',' read -ra PROFILES <<< "$PROFILES_ARG"
 # Profile → (backend name, technique label, modal file)
 # ---------------------------------------------------------------------------
 profile_backend()   { case "$1" in standard) echo "modal-gemma4-standard" ;; optimized) echo "modal-gemma4-optimized" ;; hardcore) echo "modal-gemma4-hardcore" ;; esac }
-profile_technique() { case "$1" in standard) echo "baseline" ;; optimized) echo "optimized" ;; hardcore) echo "hardcore" ;; esac }
+profile_technique() { case "$1" in standard) echo "baseline" ;; optimized) echo "chunked-prefill" ;; hardcore) echo "chunked-prefill+prefix-caching+large-batch" ;; esac }
 profile_modal()     { case "$1" in standard) echo "modal/vllm_gemma4.py" ;; optimized) echo "modal/vllm_gemma4_optimized.py" ;; hardcore) echo "modal/vllm_gemma4_hardcore.py" ;; esac }
 
 # ---------------------------------------------------------------------------
@@ -141,7 +146,7 @@ fi
 # ---------------------------------------------------------------------------
 CSV_OUT="$REPO_ROOT/data/experiments.csv"
 mkdir -p "$(dirname "$CSV_OUT")"
-echo "technique,profile,run,wall_clock_s,success,error" > "$CSV_OUT"
+echo "technique,profile,stream,run,wall_clock_s,success,error" > "$CSV_OUT"
 echo "Writing per-run results to: $CSV_OUT"
 
 # ---------------------------------------------------------------------------
@@ -174,52 +179,57 @@ for profile in "${PROFILES[@]}"; do
   # Wait for this backend to be reachable
   wait_for_backend "$backend"
 
-  # Run crew N times
+  # Run crew N times for stream=false, then N times for stream=true
   ok=0
   fail=0
   total_ms=0
+  total_runs=0
 
-  for run in $(seq 1 "$N_RUNS"); do
+  for stream_mode in false true; do
     echo ""
-    echo "  ── Run $run / $N_RUNS ──"
-    start_ms=$(date +%s)
+    echo "  ── stream=${stream_mode} — ${N_RUNS} runs ──"
+    for run in $(seq 1 "$N_RUNS"); do
+      total_runs=$(( total_runs + 1 ))
+      echo ""
+      echo "  ── Run $run / $N_RUNS (stream=${stream_mode}) ──"
+      start_ms=$(date +%s)
 
-    crew_exit=0
-    if MODEL_NAME="$backend" \
-       CREW_VLLM_WAIT_S=0 \
-       CREW_LLM_STREAM=false \
-       uv run --group crew --group otel python "$REPO_ROOT/crew.py" \
-         --topic "$TOPIC" \
-         --technique "$technique"; then
-      ok=$(( ok + 1 ))
-    else
-      crew_exit=$?
-      fail=$(( fail + 1 ))
-      echo "  ⚠️  Run $run failed (exit $crew_exit)."
-    fi
+      crew_exit=0
+      if MODEL_NAME="$backend" \
+         CREW_VLLM_WAIT_S=0 \
+         CREW_LLM_STREAM="$stream_mode" \
+         uv run --group crew --group otel python "$REPO_ROOT/crew.py" \
+           --topic "$TOPIC" \
+           --technique "$technique"; then
+        ok=$(( ok + 1 ))
+      else
+        crew_exit=$?
+        fail=$(( fail + 1 ))
+        echo "  ⚠️  Run $run (stream=${stream_mode}) failed (exit $crew_exit)."
+      fi
 
-    end_ms=$(date +%s)
-    elapsed=$(( end_ms - start_ms ))
-    total_ms=$(( total_ms + elapsed ))
-    echo "  ⏱  Run $run wall-clock: ${elapsed}s"
+      end_ms=$(date +%s)
+      elapsed=$(( end_ms - start_ms ))
+      total_ms=$(( total_ms + elapsed ))
+      echo "  ⏱  Run $run wall-clock: ${elapsed}s"
 
-    # Append one CSV row (ttft_s/tokens are left empty; read from Prometheus if needed)
-    if [[ $crew_exit -eq 0 ]]; then
-      echo "${technique},${profile},${run},${elapsed},true," >> "$CSV_OUT"
-    else
-      echo "${technique},${profile},${run},${elapsed},false,exit_code_${crew_exit}" >> "$CSV_OUT"
-    fi
+      if [[ $crew_exit -eq 0 ]]; then
+        echo "${technique},${profile},${stream_mode},${run},${elapsed},true," >> "$CSV_OUT"
+      else
+        echo "${technique},${profile},${stream_mode},${run},${elapsed},false,exit_code_${crew_exit}" >> "$CSV_OUT"
+      fi
+    done
   done
 
-  if [[ $N_RUNS -gt 0 ]]; then
-    avg_ms=$(( total_ms / N_RUNS ))
+  if [[ $total_runs -gt 0 ]]; then
+    avg_ms=$(( total_ms / total_runs ))
   else
     avg_ms=0
   fi
 
   echo ""
-  echo "  Profile '$profile': $ok/$N_RUNS succeeded, avg wall-clock ${avg_ms}s"
-  RESULT_LINES="${RESULT_LINES}$(printf "  %-12s %-15s %d/%d       %ds\n" "$profile" "$technique" "$ok" "$N_RUNS" "$avg_ms")"
+  echo "  Profile '$profile': $ok/$total_runs succeeded, avg wall-clock ${avg_ms}s"
+  RESULT_LINES="${RESULT_LINES}$(printf "  %-12s %-32s %d/%d       %ds\n" "$profile" "$technique" "$ok" "$total_runs" "$avg_ms")"
 done
 
 # ---------------------------------------------------------------------------
@@ -229,8 +239,8 @@ echo ""
 echo "═══════════════════════════════════════════════════════"
 echo " Experiment Summary"
 echo "═══════════════════════════════════════════════════════"
-printf "  %-12s %-15s %-8s %s\n" "Profile" "Technique" "Success" "Avg (s)"
-printf "  %-12s %-15s %-8s %s\n" "-------" "---------" "-------" "-------"
+printf "  %-12s %-32s %-8s %s\n" "Profile" "Technique" "Success" "Avg (s)"
+printf "  %-12s %-32s %-8s %s\n" "-------" "---------" "-------" "-------"
 printf "%s" "$RESULT_LINES"
 echo ""
 echo "Results CSV:           $CSV_OUT"

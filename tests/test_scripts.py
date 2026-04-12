@@ -264,8 +264,8 @@ class TestModalFiles:
 # Committed sample data/experiments.csv
 # ---------------------------------------------------------------------------
 
-REQUIRED_COLUMNS = {"technique", "profile", "run", "wall_clock_s", "success", "error"}
-EXPECTED_TECHNIQUES = {"baseline", "optimized", "hardcore"}
+REQUIRED_COLUMNS = {"technique", "profile", "stream", "run", "wall_clock_s", "success", "error"}
+EXPECTED_TECHNIQUES = {"baseline", "chunked-prefill", "chunked-prefill+prefix-caching+large-batch"}
 
 
 class TestExperimentsCSV:

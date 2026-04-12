@@ -996,6 +996,11 @@ async def _handle_with_config(
         TOKENS_PER_SECOND.labels(
             technique=technique, server_profile=server_profile
         ).observe(completion_tokens / backend_duration_s)
+    # Non-streaming: treat full response time as TTFT so the proxy TTFT dashboard
+    # has data for both stream=true and stream=false traffic.
+    TTFT_SECONDS.labels(
+        technique=technique, server_profile=server_profile
+    ).observe(latency_ms / 1000.0)
     _span_event(
         "backend.response.complete",
         backend=backend.name,
@@ -1158,6 +1163,11 @@ async def _proxy_non_stream(
         TOKENS_PER_SECOND.labels(
             technique=technique, server_profile=server_profile
         ).observe(completion_tokens / backend_duration_s)
+    # Non-streaming: treat full response time as TTFT so the proxy TTFT dashboard
+    # has data for both stream=true and stream=false traffic.
+    TTFT_SECONDS.labels(
+        technique=technique, server_profile=server_profile
+    ).observe(latency_ms / 1000.0)
     _span_event(
         "backend.response.complete",
         backend=backend_name,
@@ -1245,7 +1255,9 @@ async def _proxy_stream(
                             now = time.monotonic()
                             if first_chunk:
                                 ttft_s = now - start
-                                TTFT_SECONDS.observe(ttft_s)
+                                TTFT_SECONDS.labels(
+                                    technique=technique, server_profile=server_profile
+                                ).observe(ttft_s)
                                 _span_event(
                                     "stream.first_chunk", ttft_s=f"{ttft_s:.3f}"
                                 )
