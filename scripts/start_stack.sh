@@ -67,6 +67,20 @@ cleanup() {
 trap cleanup INT TERM
 
 # ---------------------------------------------------------------------------
+# Kill any leftover gateway processes to free ports before starting fresh
+# ---------------------------------------------------------------------------
+echo "Checking for leftover gateway processes on ports $PORT1/$PORT2..."
+for port in "$PORT1" "$PORT2" "$METRICS_PORT1" "$METRICS_PORT2"; do
+  pid=$(lsof -ti :"$port" 2>/dev/null || true)
+  if [[ -n "$pid" ]]; then
+    echo "  Killing PID $pid on port $port"
+    kill "$pid" 2>/dev/null || true
+  fi
+done
+# Brief pause so the OS releases the sockets before we re-bind
+sleep 1
+
+# ---------------------------------------------------------------------------
 # Stop any existing nginx on /tmp to avoid conflict
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_NGINX" != "1" ]] && command -v nginx &>/dev/null; then
