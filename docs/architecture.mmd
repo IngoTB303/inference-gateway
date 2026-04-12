@@ -1,0 +1,34 @@
+flowchart LR
+    A["<b>Client</b><br/>crew.py / curl"] -->|"HTTP POST /v1/chat/completions<br/>X-Technique: baseline|optimized|hardcore"| B
+
+    subgraph LB ["Nginx Load Balancer :8780"]
+        B["Round-robin upstream<br/>:8080 / :8081"]
+    end
+
+    subgraph GW ["Inference Gateway (Python)"]
+        C["Auth · Validation<br/>Request-ID · Metrics"]
+        D["BackendRouter<br/>(config.yaml)"] 
+        C --> D
+    end
+
+    B --> C
+
+    subgraph Modal ["Modal Cloud (A10G GPU)"]
+        E["vLLM :8000<br/>google/gemma-4-e2b-it"]
+    end
+
+    D -->|"HTTPS proxy"| E
+    E -->|"SSE stream / JSON"| D
+    D -->|"OpenAI response"| C
+    C -->|"X-Request-ID echo"| B
+    B --> A
+
+    subgraph Obs ["Observability"]
+        F["Prometheus :9090"]
+        G["Grafana :3000"]
+        F --> G
+    end
+
+    C -->|"Prom metrics :9101/:9102"| F
+    B -->|"nginx stub_status :9113"| F
+    E -->|"vLLM /metrics"| F

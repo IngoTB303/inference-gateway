@@ -108,23 +108,23 @@
       },
       "targets": [
         {
-          "expr": "vllm:kv_cache_usage_perc",
-          "legendFormat": "KV cache",
+          "expr": "max by (server_profile, technique) (vllm:kv_cache_usage_perc)",
+          "legendFormat": "KV cache · {{server_profile}} · {{technique}}",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(vllm:generation_tokens_total[1m]))",
-          "legendFormat": "Generation tok/s",
+          "expr": "sum by (server_profile, technique) (rate(vllm:generation_tokens_total[1m]))",
+          "legendFormat": "Generation tok/s · {{server_profile}} · {{technique}}",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(vllm:inter_token_latency_seconds_bucket[5m])))",
-          "legendFormat": "p95 inter-token (decode step)",
+          "expr": "histogram_quantile(0.95, sum by (le, server_profile, technique) (rate(vllm:inter_token_latency_seconds_bucket[5m])))",
+          "legendFormat": "p95 inter-token · {{server_profile}} · {{technique}}",
           "refId": "C"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket[5m])))",
-          "legendFormat": "p95 engine TTFT",
+          "expr": "histogram_quantile(0.95, sum by (le, server_profile, technique) (rate(vllm:time_to_first_token_seconds_bucket[5m])))",
+          "legendFormat": "p95 engine TTFT · {{server_profile}} · {{technique}}",
           "refId": "D"
         }
       ],

@@ -65,8 +65,9 @@ TOKENS_PER_SECOND = Histogram(
 
 TTFT_SECONDS = Histogram(
     "gateway_ttft_seconds",
-    "Streaming time-to-first-token in seconds",
-    buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+    "Time-to-first-token (streaming) / end-to-end response time (non-streaming) in seconds",
+    ["technique", "server_profile"],
+    buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0],
 )
 
 INTER_CHUNK_SECONDS = Histogram(

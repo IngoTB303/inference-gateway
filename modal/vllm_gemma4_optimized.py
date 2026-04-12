@@ -13,9 +13,6 @@ Optimizations applied (all Gemma 4 / A10G specific):
                                 and decode can batch together; reduces first-token latency
                                 under concurrent load without extra VRAM.
   --max-num-batched-tokens 512  chunk size for chunked prefill; matched to A10G VRAM.
-  --enable-prefix-caching       caches KV state for shared prompt prefixes (system
-                                prompt, few-shot examples); Gemma 4's global attention
-                                layers make this especially effective.
   --max-num-seqs 64             allow more concurrent sequences; chunked prefill keeps
                                 memory bounded even with a larger queue.
 
@@ -110,7 +107,6 @@ def serve() -> None:
         "--enable-chunked-prefill",
         "--max-num-batched-tokens",
         str(CHUNKED_PREFILL_TOKENS),
-        "--enable-prefix-caching",
         "--max-num-seqs",
         "64",
     ]
