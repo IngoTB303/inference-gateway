@@ -1,0 +1,43 @@
+meta {
+  name: Context too long (token limit guard)
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{base_url}}/v1/chat/completions
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "model": "modal-gemma4-standard",
+    "messages": [{"role": "user", "content": "hi"}],
+    "max_tokens": 8192
+  }
+}
+
+tests {
+  test("status is 400", function() {
+    expect(res.status).to.equal(400);
+  });
+
+  test("error is context_too_long", function() {
+    expect(res.body.error).to.equal("context_too_long");
+  });
+
+  test("estimated_tokens is present and positive", function() {
+    expect(res.body).to.have.property("estimated_tokens");
+    expect(res.body.estimated_tokens).to.be.above(0);
+  });
+
+  test("max_model_len is present and matches backend config", function() {
+    expect(res.body).to.have.property("max_model_len");
+    expect(res.body.max_model_len).to.equal(8192);
+  });
+
+  test("message field is present", function() {
+    expect(res.body).to.have.property("message");
+  });
+}
