@@ -1,0 +1,114 @@
+meta {
+  name: NuExtract3 - Meldebescheinigung (Bild)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{nuextract3_url}}/chat/completions
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  // Template als JS-Objekt definieren — hier anpassen:
+  const template = {
+    "familienname": "verbatim-string",
+    "geburtsname": "verbatim-string",
+    "vorname": "verbatim-string",
+    "geburtsdatum": "date",
+    "geburtsort": "verbatim-string",
+    "adresse": {
+      "strasse_hausnummer": "verbatim-string",
+      "postleitzahl": "verbatim-string",
+      "wohnort": "verbatim-string",
+      "kreis": "verbatim-string"
+    },
+    "wohnsituation": ["allein", "mit Ehegatte/Lebenspartner und/oder Kind", "bei Erziehungsberechtigtem", "unbekannt"],
+    "ausstellungsort": "verbatim-string",
+    "ausstellungsdatum": "date",
+    "unterschrift_behoerde": "verbatim-string"
+  };
+  bru.setVar("extraction_template", JSON.stringify(JSON.stringify(template)));
+}
+
+body:json {
+  {
+    "model": "NuExtract3",
+    "temperature": 0.2,
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/png;base64,{{document_base64}}"
+            }
+          }
+        ]
+      }
+    ],
+    "chat_template_kwargs": {
+      "template": {{extraction_template}},
+      "instructions": "Extrahiere alle Felder exakt so, wie sie im Dokument stehen. Felder, die nicht vorhanden oder nicht lesbar sind, setze auf null. Datum im Format YYYY-MM-DD.",
+      "enable_thinking": false
+    }
+  }
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("choices has at least one entry", function() {
+    expect(res.body.choices).to.have.length.above(0);
+  });
+
+  test("response is valid JSON", function() {
+    const content = res.body.choices[0].message.content;
+    const parsed = JSON.parse(content);
+    expect(parsed).to.be.an("object");
+  });
+
+  test("familienname is present", function() {
+    const content = res.body.choices[0].message.content;
+    const parsed = JSON.parse(content);
+    expect(parsed.familienname).to.be.a("string");
+  });
+
+  test("geburtsdatum format is YYYY-MM-DD", function() {
+    const content = res.body.choices[0].message.content;
+    const parsed = JSON.parse(content);
+    if (parsed.geburtsdatum !== null) {
+      expect(parsed.geburtsdatum).to.match(/^\d{4}-\d{2}-\d{2}$/);
+    }
+  });
+}
+
+script:post-response {
+  const content = res.body.choices[0].message.content;
+  console.log("=== Extraktion ===");
+  console.log(content);
+  console.log("==================");
+}
+
+docs {
+  Strukturierte Extraktion aus einer Meldebescheinigung (als Bild).
+
+  Template anpassen: JS-Objekt im script:pre-request bearbeiten.
+  bru.setVar serialisiert es korrekt — keine manuelle JSON-Escapierung nötig.
+
+  Unterstützte Feldtypen:
+    "verbatim-string"          — exakter Text aus dem Dokument
+    "string"                   — Text mit Abstraktion
+    "date" / "date-time"       — Datum (Ausgabe: YYYY-MM-DD)
+    "number" / "integer"       — Zahlen
+    ["opt1", "opt2"]           — Enum (eine Auswahl)
+    [["opt1", "opt2"]]         — Multi-Enum (mehrere Auswahlen)
+    ["string"]                 — Array von Strings
+
+  Voraussetzung: Umgebung "modal-nuextract3" aktiv + document_base64 befüllt:
+    bash scripts/gen_nuextract3_bruno_env.sh scripts/Meldebescheinigung_Beispiel.pdf
+}

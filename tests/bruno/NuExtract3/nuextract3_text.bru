@@ -1,0 +1,83 @@
+meta {
+  name: NuExtract3 - Text Extraktion
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{nuextract3_url}}/chat/completions
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  // Template als JS-Objekt definieren — hier anpassen:
+  const template = {
+    "familienname": "verbatim-string",
+    "vorname": "verbatim-string",
+    "geburtsdatum": "date",
+    "geburtsort": "verbatim-string",
+    "adresse": {
+      "strasse_hausnummer": "verbatim-string",
+      "postleitzahl": "verbatim-string",
+      "wohnort": "verbatim-string"
+    },
+    "ausstellungsort": "verbatim-string",
+    "ausstellungsdatum": "date",
+    "unterschrift_behoerde": "verbatim-string"
+  };
+  bru.setVar("extraction_template", JSON.stringify(JSON.stringify(template)));
+}
+
+script:post-response {
+  const content = res.body.choices[0].message.content;
+  console.log("=== Model Response ===");
+  console.log(content);
+  console.log("=====================");
+}
+
+body:json {
+  {
+    "model": "NuExtract3",
+    "temperature": 0.2,
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Max Mustermann, geboren am 01.01.1990 in München, wohnhaft Musterstraße 42, 80331 München, ist seit dem 15.03.2024 hier gemeldet. Ausgestellt am 01.06.2026 in München von Frau Dr. Schmidt."
+          }
+        ]
+      }
+    ],
+    "chat_template_kwargs": {
+      "template": {{extraction_template}},
+      "instructions": "Extrahiere alle Felder exakt so, wie sie im Text stehen. Felder, die nicht vorhanden sind, setze auf null. Datum im Format YYYY-MM-DD.",
+      "enable_thinking": false
+    }
+  }
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("response is valid JSON", function() {
+    const content = res.body.choices[0].message.content;
+    const parsed = JSON.parse(content);
+    expect(parsed).to.be.an("object");
+  });
+
+  test("familienname is Mustermann", function() {
+    const content = res.body.choices[0].message.content;
+    const parsed = JSON.parse(content);
+    expect(parsed.familienname).to.equal("Mustermann");
+  });
+}
+
+docs {
+  Text-basierte Extraktion — kein Bild nötig, gut als Smoke-Test.
+  Template unter "_template" direkt im Body-Editor anpassen.
+}

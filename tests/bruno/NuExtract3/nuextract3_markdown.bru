@@ -1,0 +1,55 @@
+meta {
+  name: NuExtract3 - Markdown Konvertierung
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{nuextract3_url}}/chat/completions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "model": "NuExtract3",
+    "temperature": 0,
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/png;base64,{{document_base64}}"
+            }
+          }
+        ]
+      }
+    ],
+    "chat_template_kwargs": {
+      "mode": "markdown",
+      "enable_thinking": false
+    }
+  }
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("response contains markdown content", function() {
+    const content = res.body.choices[0].message.content;
+    expect(content).to.be.a("string");
+    expect(content.length).to.be.above(0);
+  });
+}
+
+docs {
+  Konvertiert das Dokument in Markdown (kein JSON-Template nötig).
+  Nützlich um den Dokumentinhalt vor der Extraktion zu prüfen.
+
+  Voraussetzung: document_base64 in der Umgebung muss befüllt sein.
+    bash scripts/gen_nuextract3_bruno_env.sh scripts/Meldebescheinigung_Beispiel.pdf
+}

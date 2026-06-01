@@ -52,7 +52,7 @@ MAX_NUM_SEQS = 64  # conservative concurrency for 128K context
 # Image — latest vLLM OpenAI-compatible server (includes CUDA + vLLM)
 # ---------------------------------------------------------------------------
 vllm_image = (
-    modal.Image.from_registry("vllm/vllm-openai:latest")
+    modal.Image.from_registry("vllm/vllm-openai:latest", add_python="3.12")
     .entrypoint([])
     .env({"HF_XET_HIGH_PERFORMANCE": "1"})
 )
@@ -75,7 +75,7 @@ app = modal.App("vllm-nuextract3-a100")
     timeout=20 * MINUTES,
     min_containers=0,  # scale to zero when idle; cold start ~3-5 min (weights cached in volume)
     max_containers=1,
-    scaledown_window=5 * MINUTES,  # scale down after 5 min of no requests
+    scaledown_window=15 * MINUTES,  # scale down after 15 min of no requests
     volumes={
         "/root/.cache/huggingface": hf_cache_vol,
         "/root/.cache/vllm": vllm_cache_vol,

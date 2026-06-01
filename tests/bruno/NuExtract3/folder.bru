@@ -1,0 +1,19 @@
+meta {
+  name: NuExtract3
+  type: folder
+}
+
+docs {
+  NuExtract3 (numind/NuExtract3) — Strukturierte Extraktion und Markdown-Konvertierung
+  aus Dokumenten via vLLM auf Modal (A100).
+
+  Endpoint: https://ingo-villnow--vllm-nuextract3-a100-serve.modal.run/v1
+
+  Umgebung vorbereiten (Base64 des Dokuments generieren):
+    bash scripts/gen_nuextract3_bruno_env.sh [PDF_PFAD]
+
+  Dokument-Übergabe:
+    Dokumente werden als Base64-kodierte PNG-Bilder (data-URL) im OpenAI image_url
+    Format übergeben. PDFs müssen vorher seitenweise in PNGs konvertiert werden.
+    Das Hilfsskript übernimmt die Konvertierung und schreibt die Bruno-Umgebungsdatei.
+}
